@@ -1,0 +1,5 @@
+hidden_size: 64
+num_blocks: 2
+num_heads: 2
+dropout: 0.2
+maxlen: 50

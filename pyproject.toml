@@ -21,6 +21,7 @@ test = ["pytest>=8"]
 
 [project.scripts]
 ftrec-preprocess = "ftrec.cli.preprocess:main"
+ftrec-pretrain = "ftrec.cli.pretrain:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
