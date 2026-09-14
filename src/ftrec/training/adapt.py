@@ -326,6 +326,7 @@ def train_adaptation(
         result_payload = {
             **metadata,
             "best_epoch": stopping.best_epoch,
+            "checkpoint_path": str(Path(settings.output_dir) / "best.pt"),
             "num_total_params": num_total,
             "num_trainable_params": num_trainable,
             "pretrain_metrics": pretrain_metrics,

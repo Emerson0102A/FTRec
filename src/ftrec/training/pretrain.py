@@ -398,6 +398,10 @@ def train_pretraining(
         "method": settings.method,
         "seed": settings.seed,
     }
+    num_total = sum(parameter.numel() for parameter in model.parameters())
+    num_trainable = sum(
+        parameter.numel() for parameter in model.parameters() if parameter.requires_grad
+    )
     final_validation: dict[int, dict[str, float | int | str]] = {}
 
     with RunDirectory(settings.output_dir, force=settings.force) as run:
@@ -531,10 +535,13 @@ def train_pretraining(
         result_payload = {
             "best_epoch": stopping.best_epoch,
             "best_validation_macro_ndcg": stopping.best_metric,
+            "checkpoint_path": str(Path(settings.output_dir) / "best.pt"),
             "config_hash": config_hash,
             "data_hash": settings.data_hash,
             "initialization_hash": initialization_hash,
             "method": settings.method,
+            "num_total_params": num_total,
+            "num_trainable_params": num_trainable,
             "seed": settings.seed,
             "test_metrics": final_test,
             "validation_metrics": final_validation,
