@@ -101,6 +101,7 @@ def _figure_recovery(rows: Sequence[RecoveryRow]) -> plt.Figure:
     axis.set_xscale("log", base=2)
     ticks = sorted({row.lora_rank for row in selected})
     if ticks:
+        axis.set_xlim(ticks[0] / 1.5, ticks[-1] * 1.5)
         axis.set_xticks(ticks, [str(rank) for rank in ticks])
     axis.set_xlabel("LoRA rank")
     axis.set_ylabel("Recovery")

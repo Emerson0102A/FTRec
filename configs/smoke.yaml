@@ -1,0 +1,12 @@
+output_dir: results/smoke
+seed: 42
+device: cpu
+hidden_size: 8
+num_blocks: 1
+num_heads: 1
+maxlen: 8
+batch_size: 2
+steps_per_epoch: 1
+epochs: 1
+evaluation_protocol: sampled
+lora_ranks: [1, 2, 4, 8, 16]

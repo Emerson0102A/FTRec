@@ -619,7 +619,7 @@ def export_processed_dataset(
             stat = path.stat()
             inputs[domain.name] = {
                 "filename": domain.filename,
-                "mtime_ns": stat.st_mtime_ns,
+                "sha256": _file_hash(path),
                 "size": stat.st_size,
             }
     manifest = {
