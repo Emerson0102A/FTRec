@@ -7,12 +7,25 @@ import json
 import os
 import shutil
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
 
 class OutputExistsError(FileExistsError):
     """Raised when a completed artifact would be overwritten."""
+
+
+def _replace_with_retry(source: Path, destination: Path, attempts: int = 6) -> None:
+    """Tolerate short-lived Windows antivirus/indexer directory locks."""
+    for attempt in range(attempts):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            if attempt + 1 == attempts:
+                raise
+            time.sleep(0.05 * (2**attempt))
 
 
 def write_json(path: str | Path, value: Any) -> None:
@@ -85,12 +98,11 @@ class RunDirectory:
                 )
                 if backup.exists():
                     shutil.rmtree(backup)
-                os.replace(self.final_path, backup)
-            os.replace(self.path, self.final_path)
+                _replace_with_retry(self.final_path, backup)
+            _replace_with_retry(self.path, self.final_path)
             if backup is not None:
                 shutil.rmtree(backup)
         except BaseException:
             if backup is not None and backup.exists() and not self.final_path.exists():
-                os.replace(backup, self.final_path)
+                _replace_with_retry(backup, self.final_path)
             raise
-

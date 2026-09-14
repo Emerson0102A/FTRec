@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 CLI_MODULES = (
@@ -84,3 +85,12 @@ def test_server_scripts_are_fail_fast_and_stage_scoped() -> None:
         text = (root / "scripts" / name).read_text(encoding="utf-8")
         assert "set -euo pipefail" in text
         assert 'BASH_SOURCE[0]' in text
+
+
+def test_production_training_configs_enable_bf16() -> None:
+    root = Path(__file__).parents[1]
+    for name in ("single.yaml", "joint.yaml", "pcgrad.yaml", "lora.yaml", "fullft.yaml"):
+        config = yaml.safe_load(
+            (root / "configs" / "experiment" / name).read_text(encoding="utf-8")
+        )
+        assert config["bf16"] is True

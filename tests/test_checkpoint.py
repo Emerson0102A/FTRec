@@ -37,3 +37,15 @@ def test_checkpoint_rejects_wrong_data_fingerprint(tmp_path: Path) -> None:
     with pytest.raises(CheckpointMismatchError, match="data_hash"):
         load_checkpoint(path, _model(), expected={"data_hash": "data-b"})
 
+
+def test_checkpoint_rejects_tampered_model_state(tmp_path: Path) -> None:
+    from ftrec.training.checkpoint import CheckpointMismatchError, load_checkpoint, save_checkpoint
+
+    path = tmp_path / "checkpoint.pt"
+    save_checkpoint(path, _model(), metadata={"data_hash": "data-a"})
+    payload = torch.load(path, weights_only=False)
+    payload["model"]["final_norm.bias"][0] += 1
+    torch.save(payload, path)
+
+    with pytest.raises(CheckpointMismatchError, match="model_state_hash"):
+        load_checkpoint(path, _model())

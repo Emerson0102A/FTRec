@@ -8,6 +8,7 @@ ranks: [1, 2, 4, 8, 16]
 seeds: [42, 43, 44]
 alpha: null
 device: cuda
+bf16: true
 batch_size: 128
 steps_per_epoch: 250
 epochs: 50

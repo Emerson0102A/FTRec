@@ -92,6 +92,13 @@ def load_checkpoint(
                 f"checkpoint {key} mismatch: expected {expected_value!r}, got {actual!r}"
             )
     model.load_state_dict(payload["model"], strict=True)
+    actual_model_hash = model_state_hash(model)
+    expected_model_hash = metadata.get("model_state_hash")
+    if expected_model_hash != actual_model_hash:
+        raise CheckpointMismatchError(
+            "checkpoint model_state_hash mismatch: "
+            f"expected {expected_model_hash!r}, got {actual_model_hash!r}"
+        )
     if restore_rng:
         random.setstate(payload["rng"]["python"])
         np.random.set_state(payload["rng"]["numpy"])
@@ -99,4 +106,3 @@ def load_checkpoint(
         if torch.cuda.is_available() and payload["rng"]["torch_cuda"]:
             torch.cuda.set_rng_state_all(payload["rng"]["torch_cuda"])
     return LoadedCheckpoint(metadata, dict(payload.get("training_state", {})))
-

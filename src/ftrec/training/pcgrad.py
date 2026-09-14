@@ -130,12 +130,21 @@ def _combine(
 def project_pcgrad(
     tasks: Sequence[TaskGradients], *, seed: int, step: int
 ) -> tuple[TaskGradients, ...]:
+    projected, _ = project_pcgrad_with_counts(tasks, seed=seed, step=step)
+    return projected
+
+
+def project_pcgrad_with_counts(
+    tasks: Sequence[TaskGradients], *, seed: int, step: int
+) -> tuple[tuple[TaskGradients, ...], tuple[int, ...]]:
     if not tasks:
         raise ValueError("PCGrad requires at least one task")
     originals = tuple(_clone(task) for task in tasks)
     projected: list[TaskGradients] = []
+    projection_counts: list[int] = []
     for task_index, task in enumerate(originals):
         current = _clone(task)
+        count = 0
         peers = [index for index in range(len(tasks)) if index != task_index]
         random.Random(seed * 1_000_003 + step * 101 + task_index).shuffle(peers)
         for peer_index in peers:
@@ -144,8 +153,10 @@ def project_pcgrad(
             denominator = gradient_dot(peer, peer)
             if dot < 0.0 and denominator > 0.0:
                 current = _combine(current, peer, -dot / denominator)
+                count += 1
         projected.append(current)
-    return tuple(projected)
+        projection_counts.append(count)
+    return tuple(projected), tuple(projection_counts)
 
 
 def mean_gradients(tasks: Sequence[TaskGradients]) -> TaskGradients:
@@ -220,6 +231,7 @@ class GradientConflictLogger:
         step: int,
         raw: Sequence[TaskGradients],
         projected: Sequence[TaskGradients] | None = None,
+        projection_counts: Sequence[int] | None = None,
         groups: Mapping[str, tuple[str, ...] | None] | None = None,
     ) -> dict[str, object]:
         selected_groups = groups or {"full": None}
@@ -243,6 +255,8 @@ class GradientConflictLogger:
                 name: cosine_matrix(projected, prefixes=prefixes)
                 for name, prefixes in selected_groups.items()
             }
+        if projection_counts is not None:
+            record["projection_counts"] = tuple(int(value) for value in projection_counts)
         with self.path.open("a", encoding="utf-8", newline="\n") as stream:
             stream.write(
                 json.dumps(
@@ -255,4 +269,3 @@ class GradientConflictLogger:
                 + "\n"
             )
         return record
-

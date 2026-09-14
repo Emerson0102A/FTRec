@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import asdict
 from pathlib import Path
 
 from ftrec.artifacts import sha256_file
-from ftrec.config import canonical_hash, load_config
+from ftrec.config import load_config
 from ftrec.data.datasets import SequenceStore
 from ftrec.models.sasrec import SASRecConfig
-from ftrec.training.adapt import AdaptSettings, train_adaptation
+from ftrec.training.adapt import AdaptSettings, adapt_config_hash, train_adaptation
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -166,12 +165,11 @@ def main(argv: list[str] | None = None) -> int:
                         evaluation_chunk_size=int(
                             config.get("evaluation_chunk_size", 4096)
                         ),
+                        bf16=bool(config.get("bf16", False)),
                         data_hash=data_hash,
                         force=args.force,
                     )
-                    config_hash = canonical_hash(
-                        {"model": asdict(model_config), "training": asdict(settings)}
-                    )
+                    config_hash = adapt_config_hash(model_config, settings)
                     decision = "create"
                     completion_path = output / "COMPLETE.json"
                     if not base.is_file():

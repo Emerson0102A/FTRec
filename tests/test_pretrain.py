@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -147,7 +148,7 @@ def test_joint_pretraining_run_writes_checkpoints_metrics_and_gradients(tmp_path
             epochs=1,
             patience=1,
             device="cpu",
-            evaluation_protocol="full",
+            evaluation_protocol="sampled",
         ),
     )
 
@@ -156,4 +157,24 @@ def test_joint_pretraining_run_writes_checkpoints_metrics_and_gradients(tmp_path
     assert (output / "last.pt").is_file()
     assert (output / "result.json").is_file()
     assert (output / "gradient_conflicts.jsonl").is_file()
+    assert (output / "validation_candidates.json").is_file()
+    assert (output / "test_candidates.json").is_file()
+    assert (output / "resolved_config.json").is_file()
+    assert (output / "environment.json").is_file()
+    epoch = __import__("json").loads(
+        (output / "metrics.jsonl").read_text(encoding="utf-8").splitlines()[0]
+    )
+    assert set(epoch["domain_losses"]) == {"0", "1", "2", "3", "4"}
     assert len(result.test_metrics) == 5
+
+
+def test_pretrain_config_hash_ignores_output_control_fields(tmp_path: Path) -> None:
+    from ftrec.models.sasrec import SASRecConfig
+    from ftrec.training.pretrain import PretrainSettings, pretrain_config_hash
+
+    model = SASRecConfig(num_items=10)
+    settings = PretrainSettings(method="joint", output_dir=tmp_path / "first")
+
+    assert pretrain_config_hash(model, settings) == pretrain_config_hash(
+        model, replace(settings, output_dir=tmp_path / "second", force=True)
+    )

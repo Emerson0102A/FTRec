@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import os
+import platform
 import random
+import subprocess
+import sys
 
 import numpy as np
 import torch
@@ -43,3 +46,33 @@ def seed_worker(worker_id: int) -> None:
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
+
+def runtime_metadata(device: torch.device) -> dict[str, object]:
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=5,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        commit = "unknown"
+    metadata: dict[str, object] = {
+        "device": str(device),
+        "git_commit": commit,
+        "platform": platform.platform(),
+        "python": sys.version.split()[0],
+        "torch": torch.__version__,
+        "torch_cuda": torch.version.cuda,
+    }
+    if device.type == "cuda" and torch.cuda.is_available():
+        properties = torch.cuda.get_device_properties(device)
+        metadata.update(
+            {
+                "bf16_supported": torch.cuda.is_bf16_supported(),
+                "compute_capability": f"{properties.major}.{properties.minor}",
+                "gpu": properties.name,
+            }
+        )
+    return metadata

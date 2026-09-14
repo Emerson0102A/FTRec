@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import replace
 
 import pytest
 import torch
@@ -67,7 +68,7 @@ def test_adaptation_run_writes_selected_checkpoint_and_result(
             patience=1,
             lr=1e-2,
             device="cpu",
-            evaluation_protocol="full",
+            evaluation_protocol="sampled",
             data_hash="data-a",
         ),
     )
@@ -75,6 +76,10 @@ def test_adaptation_run_writes_selected_checkpoint_and_result(
     assert result.best_checkpoint.is_file()
     assert (output / "last.pt").is_file()
     assert (output / "result.json").is_file()
+    assert (output / "validation_candidates.json").is_file()
+    assert (output / "test_candidates.json").is_file()
+    assert (output / "resolved_config.json").is_file()
+    assert (output / "environment.json").is_file()
     assert result.num_trainable_params > 0
     assert result.num_total_params >= result.num_trainable_params
     assert result.test_metrics["num_eval_users"] == 1
@@ -114,3 +119,21 @@ def test_adaptation_rejects_pretrain_method_mismatch(tmp_path: Path) -> None:
                 data_hash="data-a",
             ),
         )
+
+
+def test_adapt_config_hash_ignores_output_control_fields(tmp_path: Path) -> None:
+    from ftrec.training.adapt import AdaptSettings, adapt_config_hash
+
+    _, config, _ = _fixture(tmp_path)
+    settings = AdaptSettings(
+        method="lora",
+        pretrain_method="joint",
+        domain=0,
+        output_dir=tmp_path / "first",
+        rank=2,
+        alpha=2,
+    )
+
+    assert adapt_config_hash(config, settings) == adapt_config_hash(
+        config, replace(settings, output_dir=tmp_path / "second", force=True)
+    )

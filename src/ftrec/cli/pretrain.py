@@ -4,18 +4,21 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import asdict
 from pathlib import Path
 
 from ftrec.artifacts import sha256_file
-from ftrec.config import canonical_hash, load_config
+from ftrec.config import load_config
 from ftrec.data.datasets import (
     SequenceStore,
     build_mixed_examples,
     build_single_domain_examples,
 )
 from ftrec.models.sasrec import SASRecConfig
-from ftrec.training.pretrain import PretrainSettings, train_pretraining
+from ftrec.training.pretrain import (
+    PretrainSettings,
+    pretrain_config_hash,
+    train_pretraining,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -99,6 +102,7 @@ def main(argv: list[str] | None = None) -> int:
         num_eval_negatives=int(config.get("num_eval_negatives", 100)),
         evaluation_chunk_size=int(config.get("evaluation_chunk_size", 4096)),
         gradient_log_interval=int(config.get("gradient_log_interval", 10)),
+        bf16=bool(config.get("bf16", False)),
         data_hash=_data_hash(processed_dir),
         force=args.force,
     )
@@ -119,9 +123,7 @@ def main(argv: list[str] | None = None) -> int:
                 maxlen=model_config.maxlen,
             )
         counts[domain_id] = len(examples)
-    resolved_hash = canonical_hash(
-        {"model": asdict(model_config), "training": asdict(settings)}
-    )
+    resolved_hash = pretrain_config_hash(model_config, settings)
     completion_path = output_dir / "COMPLETE.json"
     decision = "create"
     if completion_path.is_file() and not args.force:

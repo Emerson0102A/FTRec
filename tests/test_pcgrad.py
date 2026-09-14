@@ -76,3 +76,16 @@ def test_assign_mean_gradients_preserves_sparse_parameter_gradient() -> None:
         torch.tensor([[1.0, 2.0], [3.0, 4.0], [0.0, 0.0], [0.0, 0.0]]),
     )
 
+
+def test_pcgrad_reports_projection_count_for_each_task() -> None:
+    from ftrec.training.pcgrad import project_pcgrad_with_counts
+
+    tasks = (
+        _task(torch.tensor([1.0, -1.0])),
+        _task(torch.tensor([-1.0, 0.0])),
+    )
+
+    _, counts = project_pcgrad_with_counts(tasks, seed=7, step=0)
+
+    assert len(counts) == 2
+    assert sum(counts) >= 1

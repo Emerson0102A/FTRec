@@ -6,6 +6,7 @@ pretrain_methods: [joint, pcgrad]
 domains: [0, 1, 2, 3, 4]
 seeds: [42, 43, 44]
 device: cuda
+bf16: true
 batch_size: 128
 steps_per_epoch: 250
 epochs: 50
