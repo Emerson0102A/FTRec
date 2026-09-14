@@ -1,0 +1,22 @@
+processed_dir: data/processed/amazon5
+base_root: runs
+output_root: runs
+method: lora
+pretrain_methods: [joint, pcgrad]
+domains: [0, 1, 2, 3, 4]
+ranks: [1, 2, 4, 8, 16]
+seeds: [42, 43, 44]
+alpha: null
+device: cuda
+bf16: true
+batch_size: 128
+steps_per_epoch: 250
+epochs: 50
+patience: 5
+lr: 0.001
+embedding_lr: null
+weight_decay: 0.0
+grad_clip_norm: 5.0
+evaluation_protocol: full
+evaluation_chunk_size: 4096
+num_eval_negatives: 100

@@ -1,0 +1,9 @@
+--extra-index-url https://download.pytorch.org/whl/cu130
+torch==2.13.0+cu130
+numpy>=1.26,<3
+pyarrow>=14,<23
+PyYAML>=6,<7
+matplotlib>=3.8,<4
+tqdm>=4.66,<5
+pytest>=8,<9
+
