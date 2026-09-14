@@ -1,2 +1,10 @@
 Dataset
 .worktrees/
+/data/processed/
+/runs/
+/results/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.pytest_cache/
+__pycache__/
