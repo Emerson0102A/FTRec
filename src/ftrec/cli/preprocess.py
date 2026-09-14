@@ -20,6 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-item-interactions", type=int)
     parser.add_argument("--batch-size", type=int)
     parser.add_argument("--sqlite-path", type=Path)
+    parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--force", action="store_true")
     return parser
 
@@ -38,6 +39,33 @@ def main(argv: list[str] | None = None) -> int:
         "sqlite_path": args.sqlite_path,
         "force": args.force,
     }
+    if args.dry_run:
+        from ftrec.data.amazon import AMAZON5_DOMAINS
+
+        missing = [
+            domain.filename
+            for domain in AMAZON5_DOMAINS
+            if not (values["input_dir"] / domain.filename).is_file()
+        ]
+        output = values["output_dir"]
+        decision = (
+            "replace"
+            if output.exists() and args.force
+            else "conflict" if output.exists() else "create"
+        )
+        print(
+            json.dumps(
+                {
+                    "decision": decision,
+                    "input_dir": str(values["input_dir"]),
+                    "missing_inputs": missing,
+                    "output_dir": str(output),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        return 0
     result = preprocess_amazon5(PreprocessSettings(**values))
     payload = {
         "output_dir": str(result.output_dir),
@@ -52,4 +80,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

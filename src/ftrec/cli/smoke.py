@@ -15,6 +15,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", type=Path, default=Path("configs/smoke.yaml"))
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--seed", type=int)
+    parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--force", action="store_true")
     return parser
 
@@ -22,9 +23,29 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     config = load_config(args.config)
+    output_dir = args.output_dir or Path(str(config["output_dir"]))
+    seed = args.seed if args.seed is not None else int(config["seed"])
+    if args.dry_run:
+        print(
+            json.dumps(
+                {
+                    "decision": (
+                        "replace"
+                        if output_dir.exists() and args.force
+                        else "conflict" if output_dir.exists() else "create"
+                    ),
+                    "model_runs": 67,
+                    "output_dir": str(output_dir),
+                    "seed": seed,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        return 0
     report = run_smoke(
-        args.output_dir or Path(str(config["output_dir"])),
-        seed=args.seed if args.seed is not None else int(config["seed"]),
+        output_dir,
+        seed=seed,
         force=args.force,
     )
     print(
