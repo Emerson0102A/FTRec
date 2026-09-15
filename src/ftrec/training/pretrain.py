@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import math
 import random
+import sys
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -20,7 +22,7 @@ from ftrec.data.datasets import (
     build_single_domain_examples,
 )
 from ftrec.data.sampling import (
-    BalancedBatchManifest,
+    BalancedBatchPlan,
     SameDomainNegativeSampler,
 )
 from ftrec.evaluation.ranking import evaluate_model
@@ -62,6 +64,7 @@ class PretrainSettings:
     evaluation_protocol: str = "full"
     num_eval_negatives: int = 100
     evaluation_chunk_size: int = 4096
+    evaluation_batch_size: int = 128
     gradient_log_interval: int = 1
     bf16: bool = False
     data_hash: str = "unknown"
@@ -81,7 +84,11 @@ class PretrainSettings:
                 raise ValueError(f"{name} must be positive")
         if self.evaluation_protocol not in {"full", "sampled"}:
             raise ValueError("evaluation_protocol must be 'full' or 'sampled'")
-        if self.num_eval_negatives < 1 or self.evaluation_chunk_size < 1:
+        if (
+            self.num_eval_negatives < 1
+            or self.evaluation_chunk_size < 1
+            or self.evaluation_batch_size < 1
+        ):
             raise ValueError("evaluation sizes must be positive")
         if self.gradient_log_interval < 1:
             raise ValueError("gradient_log_interval must be positive")
@@ -130,9 +137,9 @@ def prepare_batch_manifest(
     batch_size: int,
     steps: int,
     seed: int,
-) -> BalancedBatchManifest:
-    manifest = BalancedBatchManifest.create(
-        examples_by_domain, batch_size=batch_size, steps=steps, seed=seed
+) -> BalancedBatchPlan:
+    manifest = BalancedBatchPlan.create(
+        examples_by_domain, batch_size=batch_size, total_steps=steps, seed=seed
     )
     manifest.write(path)
     return manifest
@@ -145,6 +152,7 @@ def _task_loss(
     *,
     seed: int,
     bf16: bool = False,
+    samplers: Mapping[int, SameDomainNegativeSampler] | None = None,
 ) -> torch.Tensor:
     if not examples:
         raise ValueError("a task micro-batch cannot be empty")
@@ -155,13 +163,19 @@ def _task_loss(
         device=device,
     )
     negatives = []
-    samplers: dict[int, SameDomainNegativeSampler] = {}
+    sampler_cache = dict(samplers or {})
+    generators: dict[int, random.Random] = {}
     for example in examples:
-        sampler = samplers.setdefault(
-            example.target_domain,
-            SameDomainNegativeSampler(item_catalogs, seed + example.target_domain),
-        )
-        negatives.append(sampler.sample(example))
+        domain = example.target_domain
+        sampler = sampler_cache.get(domain)
+        if sampler is None:
+            sampler = SameDomainNegativeSampler(item_catalogs, seed + domain)
+            sampler_cache[domain] = sampler
+        generator = generators.get(domain)
+        if generator is None:
+            generator = random.Random(seed + domain)
+            generators[domain] = generator
+        negatives.append(sampler.sample(example, rng=generator))
     candidate_ids = torch.tensor(
         [
             [example.positive_item, negative]
@@ -193,10 +207,13 @@ def run_multitask_step(
     gradient_logger: GradientConflictLogger | None = None,
     epoch: int = 0,
     bf16: bool = False,
+    example_lookup_by_domain: Mapping[int, Mapping[int, TargetExample]] | None = None,
+    samplers: Mapping[int, SameDomainNegativeSampler] | None = None,
+    initialization_hash: str = "not-computed",
+    compute_cosine: bool = True,
 ) -> MultiTaskStepResult:
     if method not in {"joint", "pcgrad"}:
         raise ValueError("method must be 'joint' or 'pcgrad'")
-    initialization_hash = model_state_hash(model)
     model.train()
     optimizers.zero_grad()
     named_parameters = tuple(
@@ -205,9 +222,13 @@ def run_multitask_step(
         if parameter.requires_grad
     )
     task_gradients = []
-    domain_losses: dict[int, float] = {}
+    domain_loss_tensors: dict[int, torch.Tensor] = {}
     for domain in sorted(step_batches):
-        lookup = {example.example_id: example for example in examples_by_domain[domain]}
+        lookup = (
+            example_lookup_by_domain[domain]
+            if example_lookup_by_domain is not None
+            else {example.example_id: example for example in examples_by_domain[domain]}
+        )
         batch = tuple(lookup[identifier] for identifier in step_batches[domain])
         loss = _task_loss(
             model,
@@ -215,16 +236,24 @@ def run_multitask_step(
             item_catalogs,
             seed=seed * 100_003 + global_step * 101 + domain,
             bf16=bf16,
+            samplers=samplers,
         )
-        domain_losses[domain] = float(loss.detach().cpu())
+        domain_loss_tensors[domain] = loss.detach()
         task_gradients.append(collect_task_gradients(loss, named_parameters))
+    loss_values = torch.stack(
+        [domain_loss_tensors[domain] for domain in sorted(domain_loss_tensors)]
+    ).cpu().tolist()
+    domain_losses = {
+        domain: float(value)
+        for domain, value in zip(sorted(domain_loss_tensors), loss_values, strict=True)
+    }
     raw = tuple(task_gradients)
-    raw_cosine = cosine_matrix(raw)
+    raw_cosine = cosine_matrix(raw) if compute_cosine else ()
     if method == "pcgrad":
         gradients_for_step, projection_counts = project_pcgrad_with_counts(
             raw, seed=seed, step=global_step
         )
-        projected_cosine = cosine_matrix(gradients_for_step)
+        projected_cosine = cosine_matrix(gradients_for_step) if compute_cosine else ()
     else:
         gradients_for_step = raw
         projected_cosine = None
@@ -266,10 +295,11 @@ def run_single_task_step(
     global_step: int,
     grad_clip_norm: float,
     bf16: bool = False,
+    samplers: Mapping[int, SameDomainNegativeSampler] | None = None,
+    initialization_hash: str = "not-computed",
 ) -> SingleTaskStepResult:
     if not examples:
         raise ValueError("single-task batch cannot be empty")
-    initialization_hash = model_state_hash(model)
     model.train()
     optimizers.zero_grad()
     loss = _task_loss(
@@ -278,6 +308,7 @@ def run_single_task_step(
         item_catalogs,
         seed=seed * 100_003 + global_step * 101,
         bf16=bf16,
+        samplers=samplers,
     )
     loss.backward()
     norm = clip_global_grad_norm(model.parameters(), grad_clip_norm)
@@ -310,19 +341,15 @@ def _sampled_candidates(
     seed: int,
 ) -> dict[int, tuple[int, ...]]:
     candidates: dict[int, tuple[int, ...]] = {}
+    sampler = SameDomainNegativeSampler(items_by_domain, seed)
     for example in examples:
-        negatives = [
-            item
-            for item in items_by_domain.get(example.target_domain, ())
-            if item not in example.seen_items
-        ]
         generator = random.Random(
             seed * 1_000_003 + example.target_domain * 1009 + example.example_id
         )
-        generator.shuffle(negatives)
+        negatives = sampler.sample_many(example, count, rng=generator)
         candidates[example.example_id] = (
             example.positive_item,
-            *negatives[:count],
+            *negatives,
         )
     return candidates
 
@@ -360,6 +387,7 @@ def _evaluate_domains(
             protocol=settings.evaluation_protocol,
             sampled_candidates=sampled,
             chunk_size=settings.evaluation_chunk_size,
+            batch_size=settings.evaluation_batch_size,
             device=settings.device,
         )
     return metrics
@@ -476,6 +504,13 @@ def train_pretraining(
             steps=total_steps,
             seed=settings.seed,
         )
+        batch_steps = iter(manifest.iter_steps())
+        example_lookup_by_domain = {
+            domain: {example.example_id: example for example in examples}
+            for domain, examples in train_examples.items()
+        }
+        shared_sampler = SameDomainNegativeSampler(store.items_by_domain, settings.seed)
+        samplers = {domain: shared_sampler for domain in domains}
         if validation_candidates is not None and test_candidates is not None:
             run.write_json("validation_candidates.json", validation_candidates)
             run.write_json("test_candidates.json", test_candidates)
@@ -488,6 +523,7 @@ def train_pretraining(
         metrics_path = run.path / "metrics.jsonl"
         global_step = 0
         last_epoch = 0
+        training_started = time.perf_counter()
         for epoch in range(1, settings.epochs + 1):
             last_epoch = epoch
             losses: list[float] = []
@@ -496,12 +532,10 @@ def train_pretraining(
                 domain: [] for domain in domains
             }
             for _ in range(settings.steps_per_epoch):
-                batches = manifest.steps[global_step]
+                batches = next(batch_steps)
                 if settings.method == "single":
                     domain = domains[0]
-                    lookup = {
-                        example.example_id: example for example in train_examples[domain]
-                    }
+                    lookup = example_lookup_by_domain[domain]
                     batch = tuple(lookup[index] for index in batches[domain])
                     step_result = run_single_task_step(
                         model,
@@ -512,6 +546,8 @@ def train_pretraining(
                         global_step=global_step,
                         grad_clip_norm=settings.grad_clip_norm,
                         bf16=settings.bf16,
+                        samplers=samplers,
+                        initialization_hash=initialization_hash,
                     )
                     losses.append(step_result.loss)
                     domain_loss_values[domain].append(step_result.loss)
@@ -534,6 +570,10 @@ def train_pretraining(
                         ),
                         epoch=epoch,
                         bf16=settings.bf16,
+                        example_lookup_by_domain=example_lookup_by_domain,
+                        samplers=samplers,
+                        initialization_hash=initialization_hash,
+                        compute_cosine=False,
                     )
                     losses.extend(step_result.domain_losses.values())
                     for domain, value in step_result.domain_losses.items():
@@ -550,8 +590,12 @@ def train_pretraining(
                 sampled_candidates_by_domain=validation_candidates,
             )
             validation_ndcg = _macro_ndcg(final_validation)
+            elapsed_seconds = time.perf_counter() - training_started
+            eta_seconds = elapsed_seconds / epoch * (settings.epochs - epoch)
             epoch_record = {
+                "elapsed_seconds": elapsed_seconds,
                 "epoch": epoch,
+                "eta_seconds": eta_seconds,
                 "gradient_norm": sum(norms) / len(norms),
                 "loss": sum(losses) / len(losses),
                 "domain_losses": {
@@ -572,6 +616,22 @@ def train_pretraining(
                     )
                     + "\n"
                 )
+            print(
+                json.dumps(
+                    {
+                        "elapsed_seconds": round(elapsed_seconds, 1),
+                        "epoch": epoch,
+                        "eta_seconds": round(eta_seconds, 1),
+                        "event": "pretrain_epoch_complete",
+                        "method": settings.method,
+                        "validation_macro_ndcg": validation_ndcg,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
             if stopping.update(epoch, validation_ndcg):
                 save_checkpoint(
                     run.path / "best.pt",

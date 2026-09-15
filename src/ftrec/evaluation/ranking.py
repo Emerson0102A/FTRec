@@ -54,6 +54,7 @@ def evaluate_model(
     protocol: str = "full",
     sampled_candidates: Mapping[int, Sequence[int]] | None = None,
     chunk_size: int = 4096,
+    batch_size: int = 128,
     k: int = 10,
     device: str | torch.device = "cpu",
 ) -> dict[str, float | int | str]:
@@ -61,11 +62,24 @@ def evaluate_model(
         raise ValueError(f"unsupported evaluation protocol: {protocol}")
     if protocol == "sampled" and sampled_candidates is None:
         raise ValueError("sampled evaluation requires persisted candidates")
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
     metrics = RankingMetrics(k=k)
     was_training = bool(getattr(model, "training", False))
     if hasattr(model, "eval"):
         model.eval()
     try:
+        if protocol == "full" and hasattr(model, "final_state") and hasattr(model, "item_embedding"):
+            _evaluate_full_batched(
+                model,
+                examples,
+                items_by_domain,
+                metrics,
+                chunk_size=chunk_size,
+                batch_size=batch_size,
+                device=torch.device(device),
+            )
+            examples = ()
         for example in examples:
             if protocol == "sampled":
                 candidates = tuple(sampled_candidates[example.example_id])
@@ -93,3 +107,68 @@ def evaluate_model(
     result["evaluation_protocol"] = protocol
     return result
 
+
+def _evaluate_full_batched(
+    model: object,
+    examples: Sequence[TargetExample],
+    items_by_domain: Mapping[int, Sequence[int]],
+    metrics: RankingMetrics,
+    *,
+    chunk_size: int,
+    batch_size: int,
+    device: torch.device,
+) -> None:
+    by_domain: dict[int, list[TargetExample]] = {}
+    for example in examples:
+        catalog = items_by_domain.get(example.target_domain, ())
+        if not catalog or example.positive_item not in catalog:
+            metrics.skip()
+        else:
+            by_domain.setdefault(example.target_domain, []).append(example)
+    with torch.no_grad():
+        for domain, domain_examples in sorted(by_domain.items()):
+            catalog = tuple(items_by_domain[domain])
+            for offset in range(0, len(domain_examples), batch_size):
+                batch = domain_examples[offset : offset + batch_size]
+                contexts = torch.tensor(
+                    [example.context_items for example in batch],
+                    dtype=torch.long,
+                    device=device,
+                )
+                states = model.final_state(contexts)
+                target_ids = torch.tensor(
+                    [example.positive_item for example in batch],
+                    dtype=torch.long,
+                    device=device,
+                )
+                target_scores = torch.einsum(
+                    "bd,bd->b", states, model.item_embedding(target_ids)
+                )
+                ranks = torch.zeros(len(batch), dtype=torch.long, device=device)
+                for start in range(0, len(catalog), chunk_size):
+                    chunk = catalog[start : start + chunk_size]
+                    identifiers = torch.tensor(chunk, dtype=torch.long, device=device)
+                    scores = torch.einsum(
+                        "bd,cd->bc", states, model.item_embedding(identifiers)
+                    )
+                    eligible = torch.ones(
+                        (len(batch), len(chunk)), dtype=torch.bool, device=device
+                    )
+                    positions = {item: index for index, item in enumerate(chunk)}
+                    for row, example in enumerate(batch):
+                        excluded = [
+                            positions[item]
+                            for item in example.seen_items
+                            if item != example.positive_item and item in positions
+                        ]
+                        if excluded:
+                            eligible[row, excluded] = False
+                    ahead = scores > target_scores.unsqueeze(1)
+                    tied = scores == target_scores.unsqueeze(1)
+                    tied_ahead = tied & (
+                        identifiers.unsqueeze(0) < target_ids.unsqueeze(1)
+                    )
+                    not_target = identifiers.unsqueeze(0) != target_ids.unsqueeze(1)
+                    ranks += ((ahead | tied_ahead) & eligible & not_target).sum(dim=1)
+                for rank in ranks.cpu().tolist():
+                    metrics.add_rank(int(rank))

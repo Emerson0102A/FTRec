@@ -58,6 +58,24 @@ def test_export_maps_sorts_and_splits_deterministically(tmp_path: Path) -> None:
     )
 
 
+def test_export_batches_many_users_into_bounded_parquet_row_groups(tmp_path: Path) -> None:
+    from ftrec.data.preprocessing import PreprocessSettings, export_processed_dataset
+
+    connection = _filtered_database(tmp_path / "stage.sqlite")
+    ingest, core = _reports()
+    output = tmp_path / "processed"
+    export_processed_dataset(
+        connection,
+        output,
+        ingest,
+        core,
+        PreprocessSettings(tmp_path, output, 1, 1, batch_size=100),
+    )
+    connection.close()
+
+    assert pq.ParquetFile(output / "interactions.parquet").num_row_groups == 1
+
+
 def test_validator_accepts_export_and_detects_changed_hash(tmp_path: Path) -> None:
     from ftrec.data.preprocessing import (
         PreprocessSettings,

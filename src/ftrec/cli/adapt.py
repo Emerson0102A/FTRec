@@ -165,6 +165,9 @@ def main(argv: list[str] | None = None) -> int:
                         evaluation_chunk_size=int(
                             config.get("evaluation_chunk_size", 4096)
                         ),
+                        evaluation_batch_size=int(
+                            config.get("evaluation_batch_size", 128)
+                        ),
                         bf16=bool(config.get("bf16", False)),
                         data_hash=data_hash,
                         force=args.force,
