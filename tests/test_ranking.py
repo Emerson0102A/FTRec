@@ -92,3 +92,48 @@ def test_full_catalog_evaluation_encodes_each_context_batch_once(capsys) -> None
     stderr = capsys.readouterr().err
     assert "evaluate domain-0" in stderr
     assert "100%" in stderr
+
+
+def test_sampled_evaluation_encodes_each_context_batch_once() -> None:
+    """Catch regressions back to one GPU encode call per sampled user."""
+    from ftrec.evaluation.ranking import evaluate_model
+
+    class CountingSASRec(SASRec):
+        def __init__(self) -> None:
+            super().__init__(
+                SASRecConfig(
+                    num_items=100,
+                    hidden_size=8,
+                    num_blocks=1,
+                    num_heads=1,
+                    dropout=0.0,
+                    maxlen=2,
+                )
+            )
+            self.encode_calls = 0
+
+        def encode(self, item_ids: torch.Tensor) -> torch.Tensor:
+            self.encode_calls += 1
+            return super().encode(item_ids)
+
+    model = CountingSASRec()
+    examples = tuple(
+        TargetExample(i, i, (0, 1), (-1, 0), i + 2, 0, frozenset({1}))
+        for i in range(4)
+    )
+    candidates = {
+        example.example_id: (example.positive_item, 10, 11, 12)
+        for example in examples
+    }
+
+    result = evaluate_model(
+        model,
+        examples,
+        {0: tuple(range(1, 101))},
+        protocol="sampled",
+        sampled_candidates=candidates,
+        batch_size=4,
+    )
+
+    assert result["num_eval_users"] == 4
+    assert model.encode_calls == 1

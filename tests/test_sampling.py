@@ -87,3 +87,48 @@ def test_rejection_sampler_handles_nearly_exhausted_catalog() -> None:
     sampler = SameDomainNegativeSampler({1: catalog}, seed=42)
 
     assert sampler.sample(example) == catalog[-1]
+
+
+def test_evaluation_candidates_use_stable_user_key_not_example_id() -> None:
+    """Catch Single/Joint builders assigning different negatives to one target."""
+    from ftrec.data.sampling import build_evaluation_candidates
+
+    first = _example(0, 1, frozenset({11, 12}))
+    second = TargetExample(
+        example_id=99,
+        user_id=first.user_id,
+        context_items=first.context_items,
+        context_domains=first.context_domains,
+        positive_item=first.positive_item,
+        target_domain=first.target_domain,
+        seen_items=first.seen_items,
+    )
+    catalog = {1: tuple(range(11, 30))}
+
+    first_map = build_evaluation_candidates(
+        (first,), catalog, count=5, evaluation_seed=2026, split_offset=20_000
+    )
+    second_map = build_evaluation_candidates(
+        (second,), catalog, count=5, evaluation_seed=2026, split_offset=20_000
+    )
+
+    assert first_map[first.example_id] == second_map[second.example_id]
+
+
+def test_evaluation_candidates_require_exact_requested_count() -> None:
+    """Catch silently evaluating fewer than the paper's 1,000 candidates."""
+    from ftrec.data.sampling import (
+        NegativeSamplingError,
+        build_evaluation_candidates,
+    )
+
+    example = _example(0, 1, frozenset({11, 12}))
+
+    with pytest.raises(NegativeSamplingError, match="requested 3 negatives"):
+        build_evaluation_candidates(
+            (example,),
+            {1: (11, 12, 13, 14)},
+            count=3,
+            evaluation_seed=2026,
+            split_offset=20_000,
+        )

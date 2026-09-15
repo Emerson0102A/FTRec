@@ -153,6 +153,7 @@ def test_joint_pretraining_run_writes_checkpoints_metrics_and_gradients(
             patience=1,
             device="cpu",
             evaluation_protocol="sampled",
+            num_eval_negatives=1,
         ),
     )
 
@@ -161,8 +162,9 @@ def test_joint_pretraining_run_writes_checkpoints_metrics_and_gradients(
     assert (output / "last.pt").is_file()
     assert (output / "result.json").is_file()
     assert (output / "gradient_conflicts.jsonl").is_file()
-    assert (output / "validation_candidates.json").is_file()
-    assert (output / "test_candidates.json").is_file()
+    assert (output / "evaluation_candidates.json").is_file()
+    assert not (output / "validation_candidates.json").exists()
+    assert not (output / "test_candidates.json").exists()
     assert (output / "resolved_config.json").is_file()
     assert (output / "environment.json").is_file()
     epoch = __import__("json").loads(
@@ -173,6 +175,59 @@ def test_joint_pretraining_run_writes_checkpoints_metrics_and_gradients(
     stderr = capsys.readouterr().err
     assert "train joint seed-42" in stderr
     assert "100%" in stderr
+
+
+def test_evaluation_candidates_are_independent_of_training_seed(tmp_path: Path) -> None:
+    """Catch training seeds accidentally changing the paper comparison set."""
+    from ftrec.data.datasets import SequenceRecord, SequenceStore
+    from ftrec.models.sasrec import SASRecConfig
+    from ftrec.training.pretrain import PretrainSettings, train_pretraining
+
+    store = SequenceStore(
+        (
+            SequenceRecord(
+                user_id=1,
+                item_ids=(1, 2, 3, 4),
+                domain_ids=(0, 0, 0, 0),
+                timestamps=(1, 2, 3, 4),
+                splits=("train", "train", "valid", "test"),
+            ),
+        ),
+        {0: (1, 2, 3, 4, 5, 6)},
+    )
+    model = SASRecConfig(
+        num_items=6,
+        hidden_size=4,
+        num_blocks=1,
+        num_heads=1,
+        dropout=0,
+        maxlen=3,
+    )
+
+    for training_seed in (42, 43):
+        train_pretraining(
+            store,
+            model,
+            PretrainSettings(
+                method="joint",
+                output_dir=tmp_path / f"seed-{training_seed}",
+                seed=training_seed,
+                evaluation_seed=2026,
+                batch_size=1,
+                steps_per_epoch=1,
+                epochs=1,
+                patience=1,
+                device="cpu",
+                evaluation_protocol="sampled",
+                num_eval_negatives=2,
+                progress=False,
+            ),
+        )
+
+    first = (tmp_path / "seed-42" / "evaluation_candidates.json").read_bytes()
+    second = (tmp_path / "seed-43" / "evaluation_candidates.json").read_bytes()
+    assert first == second
+    assert len(first) < 1_000
 
 
 def test_pretrain_config_hash_ignores_output_control_fields(tmp_path: Path) -> None:

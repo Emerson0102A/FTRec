@@ -79,6 +79,54 @@ class SameDomainNegativeSampler:
         return tuple(selected)
 
 
+def build_evaluation_candidates(
+    examples: Sequence[TargetExample],
+    items_by_domain: Mapping[int, Sequence[int]],
+    *,
+    count: int,
+    evaluation_seed: int,
+    split_offset: int,
+) -> dict[int, tuple[int, ...]]:
+    """Build fixed same-domain candidates keyed by each local example id."""
+    if count < 1:
+        raise ValueError("evaluation negative count must be positive")
+    sampler = SameDomainNegativeSampler(items_by_domain, evaluation_seed)
+    candidates: dict[int, tuple[int, ...]] = {}
+    for example in examples:
+        stable_seed = (
+            evaluation_seed * 1_000_003
+            + split_offset * 10_007
+            + example.target_domain * 1009
+            + example.user_id * 101
+            + example.positive_item
+        )
+        negatives = sampler.sample_many(
+            example, count, rng=random.Random(stable_seed)
+        )
+        if len(negatives) != count:
+            raise NegativeSamplingError(
+                f"requested {count} negatives for user {example.user_id} in domain "
+                f"{example.target_domain}, but only {len(negatives)} unseen items exist"
+            )
+        candidates[example.example_id] = (example.positive_item, *negatives)
+    return candidates
+
+
+def evaluation_candidate_manifest(
+    *, count: int, evaluation_seed: int
+) -> dict[str, object]:
+    """Describe the deterministic recipe without duplicating huge candidate files."""
+    return {
+        "algorithm": "same-domain-user-target-v1",
+        "candidates_per_user": count + 1,
+        "evaluation_seed": evaluation_seed,
+        "negative_count": count,
+        "positive_position": 0,
+        "scope": "same_domain",
+        "split_offsets": {"test": 20_000, "validation": 10_000},
+    }
+
+
 @dataclass(frozen=True)
 class BalancedBatchPlan:
     """Compact deterministic batch recipe; identifiers are generated lazily."""

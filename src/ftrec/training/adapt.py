@@ -16,7 +16,12 @@ from tqdm.auto import tqdm
 from ftrec.artifacts import RunDirectory, sha256_file
 from ftrec.config import canonical_hash, canonical_json
 from ftrec.data.datasets import SequenceStore, TargetExample, build_mixed_examples
-from ftrec.data.sampling import BalancedBatchPlan, SameDomainNegativeSampler
+from ftrec.data.sampling import (
+    BalancedBatchPlan,
+    SameDomainNegativeSampler,
+    build_evaluation_candidates,
+    evaluation_candidate_manifest,
+)
 from ftrec.evaluation.ranking import evaluate_model
 from ftrec.models.lora import (
     inject_qv_lora,
@@ -51,6 +56,7 @@ class AdaptSettings:
     device: str = "cpu"
     evaluation_protocol: str = "full"
     num_eval_negatives: int = 100
+    evaluation_seed: int = 2026
     evaluation_chunk_size: int = 4096
     evaluation_batch_size: int = 128
     bf16: bool = False
@@ -110,20 +116,13 @@ def _candidate_map(
 ) -> dict[int, tuple[int, ...]] | None:
     if settings.evaluation_protocol == "full":
         return None
-    result: dict[int, tuple[int, ...]] = {}
-    sampler = SameDomainNegativeSampler(store.items_by_domain, settings.seed)
-    for example in examples:
-        generator = random.Random(
-            settings.seed * 1_000_003 + seed_offset + example.example_id
-        )
-        negatives = sampler.sample_many(
-            example, settings.num_eval_negatives, rng=generator
-        )
-        result[example.example_id] = (
-            example.positive_item,
-            *negatives,
-        )
-    return result
+    return build_evaluation_candidates(
+        examples,
+        store.items_by_domain,
+        count=settings.num_eval_negatives,
+        evaluation_seed=settings.evaluation_seed,
+        split_offset=seed_offset,
+    )
 
 
 def _evaluate(
@@ -284,8 +283,13 @@ def train_adaptation(
         manifest.write(run.path / "batch_manifest.json")
         batch_steps = iter(manifest.iter_steps())
         if validation_candidates is not None and test_candidates is not None:
-            run.write_json("validation_candidates.json", validation_candidates)
-            run.write_json("test_candidates.json", test_candidates)
+            run.write_json(
+                "evaluation_candidates.json",
+                evaluation_candidate_manifest(
+                    count=settings.num_eval_negatives,
+                    evaluation_seed=settings.evaluation_seed,
+                ),
+            )
         metrics_path = run.path / "metrics.jsonl"
         global_step = 0
         lookup = {example.example_id: example for example in train_examples}

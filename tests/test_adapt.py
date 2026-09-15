@@ -69,6 +69,7 @@ def test_adaptation_run_writes_selected_checkpoint_and_result(
             lr=1e-2,
             device="cpu",
             evaluation_protocol="sampled",
+            num_eval_negatives=1,
             data_hash="data-a",
         ),
     )
@@ -76,8 +77,9 @@ def test_adaptation_run_writes_selected_checkpoint_and_result(
     assert result.best_checkpoint.is_file()
     assert (output / "last.pt").is_file()
     assert (output / "result.json").is_file()
-    assert (output / "validation_candidates.json").is_file()
-    assert (output / "test_candidates.json").is_file()
+    assert (output / "evaluation_candidates.json").is_file()
+    assert not (output / "validation_candidates.json").exists()
+    assert not (output / "test_candidates.json").exists()
     assert (output / "resolved_config.json").is_file()
     assert (output / "environment.json").is_file()
     assert result.num_trainable_params > 0

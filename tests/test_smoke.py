@@ -24,8 +24,9 @@ def test_complete_smoke_runs_every_experiment_branch(tmp_path: Path) -> None:
     assert report.evaluation_protocols == frozenset({"sampled"})
     assert report.recovery_rows == 100
     assert len(report.semantic_hash) == 64
-    assert len(tuple((tmp_path / "smoke" / "runs").rglob("validation_candidates.json"))) == 67
-    assert len(tuple((tmp_path / "smoke" / "runs").rglob("test_candidates.json"))) == 67
+    assert len(tuple((tmp_path / "smoke" / "runs").rglob("evaluation_candidates.json"))) == 67
+    assert not tuple((tmp_path / "smoke" / "runs").rglob("validation_candidates.json"))
+    assert not tuple((tmp_path / "smoke" / "runs").rglob("test_candidates.json"))
     pcgrad_log = next(
         (tmp_path / "smoke" / "runs" / "pretrain" / "pcgrad").rglob(
             "gradient_conflicts.jsonl"

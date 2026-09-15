@@ -80,7 +80,22 @@ def evaluate_model(
         disable=not progress,
     )
     try:
-        if protocol == "full" and hasattr(model, "final_state") and hasattr(model, "item_embedding"):
+        supports_batched_scoring = hasattr(model, "final_state") and hasattr(
+            model, "item_embedding"
+        )
+        if protocol == "sampled" and supports_batched_scoring:
+            assert sampled_candidates is not None
+            _evaluate_sampled_batched(
+                model,
+                examples,
+                sampled_candidates,
+                metrics,
+                batch_size=batch_size,
+                device=torch.device(device),
+                progress_bar=progress_bar,
+            )
+            examples = ()
+        elif protocol == "full" and supports_batched_scoring:
             _evaluate_full_batched(
                 model,
                 examples,
@@ -120,6 +135,81 @@ def evaluate_model(
     result = metrics.compute()
     result["evaluation_protocol"] = protocol
     return result
+
+
+def _evaluate_sampled_batched(
+    model: object,
+    examples: Sequence[TargetExample],
+    sampled_candidates: Mapping[int, Sequence[int]],
+    metrics: RankingMetrics,
+    *,
+    batch_size: int,
+    device: torch.device,
+    progress_bar: tqdm,
+) -> None:
+    """Score fixed candidate sets in user batches instead of one user at a time."""
+    with torch.no_grad():
+        for offset in range(0, len(examples), batch_size):
+            source_batch = examples[offset : offset + batch_size]
+            batch: list[TargetExample] = []
+            rows: list[tuple[int, ...]] = []
+            for example in source_batch:
+                candidates = tuple(sampled_candidates.get(example.example_id, ()))
+                eligible = tuple(
+                    item
+                    for item in candidates
+                    if item == example.positive_item or item not in example.seen_items
+                )
+                if not eligible or example.positive_item not in eligible:
+                    metrics.skip()
+                    progress_bar.update(1)
+                    continue
+                batch.append(example)
+                rows.append(eligible)
+            if not batch:
+                continue
+
+            width = max(len(row) for row in rows)
+            candidate_ids = torch.zeros(
+                (len(batch), width), dtype=torch.long, device=device
+            )
+            eligible_mask = torch.zeros(
+                (len(batch), width), dtype=torch.bool, device=device
+            )
+            for row_index, row in enumerate(rows):
+                candidate_ids[row_index, : len(row)] = torch.tensor(
+                    row, dtype=torch.long, device=device
+                )
+                eligible_mask[row_index, : len(row)] = True
+
+            contexts = torch.tensor(
+                [example.context_items for example in batch],
+                dtype=torch.long,
+                device=device,
+            )
+            states = model.final_state(contexts)
+            scores = torch.einsum(
+                "bd,bcd->bc", states, model.item_embedding(candidate_ids)
+            )
+            target_ids = torch.tensor(
+                [example.positive_item for example in batch],
+                dtype=torch.long,
+                device=device,
+            )
+            target_scores = torch.einsum(
+                "bd,bd->b", states, model.item_embedding(target_ids)
+            )
+            ahead = scores > target_scores.unsqueeze(1)
+            tied_ahead = (scores == target_scores.unsqueeze(1)) & (
+                candidate_ids < target_ids.unsqueeze(1)
+            )
+            not_target = candidate_ids != target_ids.unsqueeze(1)
+            ranks = (
+                (ahead | tied_ahead) & eligible_mask & not_target
+            ).sum(dim=1)
+            for rank in ranks.cpu().tolist():
+                metrics.add_rank(int(rank))
+            progress_bar.update(len(batch))
 
 
 def _evaluate_full_batched(

@@ -101,6 +101,7 @@ def main(argv: list[str] | None = None) -> int:
         device=str(_pick(args.device, config, "device")),
         evaluation_protocol=str(config.get("evaluation_protocol", "full")),
         num_eval_negatives=int(config.get("num_eval_negatives", 100)),
+        evaluation_seed=int(config.get("evaluation_seed", 2026)),
         evaluation_chunk_size=int(config.get("evaluation_chunk_size", 4096)),
         evaluation_batch_size=int(config.get("evaluation_batch_size", 128)),
         gradient_log_interval=int(config.get("gradient_log_interval", 10)),

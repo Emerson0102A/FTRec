@@ -14,8 +14,9 @@ lr: 0.001
 embedding_lr: 0.001
 weight_decay: 0.0
 grad_clip_norm: 5.0
-evaluation_protocol: full
+evaluation_protocol: sampled
 evaluation_chunk_size: 4096
 evaluation_batch_size: 128
-num_eval_negatives: 100
+num_eval_negatives: 999
+evaluation_seed: 2026
 gradient_log_interval: 10

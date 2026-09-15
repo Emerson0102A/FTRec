@@ -25,6 +25,8 @@ from ftrec.data.datasets import (
 from ftrec.data.sampling import (
     BalancedBatchPlan,
     SameDomainNegativeSampler,
+    build_evaluation_candidates,
+    evaluation_candidate_manifest,
 )
 from ftrec.evaluation.ranking import evaluate_model
 from ftrec.models.sasrec import SASRec, SASRecConfig
@@ -64,6 +66,7 @@ class PretrainSettings:
     device: str = "cpu"
     evaluation_protocol: str = "full"
     num_eval_negatives: int = 100
+    evaluation_seed: int = 2026
     evaluation_chunk_size: int = 4096
     evaluation_batch_size: int = 128
     gradient_log_interval: int = 1
@@ -341,20 +344,16 @@ def _sampled_candidates(
     items_by_domain: Mapping[int, Sequence[int]],
     *,
     count: int,
-    seed: int,
+    evaluation_seed: int,
+    split_offset: int,
 ) -> dict[int, tuple[int, ...]]:
-    candidates: dict[int, tuple[int, ...]] = {}
-    sampler = SameDomainNegativeSampler(items_by_domain, seed)
-    for example in examples:
-        generator = random.Random(
-            seed * 1_000_003 + example.target_domain * 1009 + example.example_id
-        )
-        negatives = sampler.sample_many(example, count, rng=generator)
-        candidates[example.example_id] = (
-            example.positive_item,
-            *negatives,
-        )
-    return candidates
+    return build_evaluation_candidates(
+        examples,
+        items_by_domain,
+        count=count,
+        evaluation_seed=evaluation_seed,
+        split_offset=split_offset,
+    )
 
 
 def _evaluate_domains(
@@ -380,7 +379,8 @@ def _evaluate_domains(
                     examples,
                     items_by_domain,
                     count=settings.num_eval_negatives,
-                    seed=settings.seed + seed_offset,
+                    evaluation_seed=settings.evaluation_seed,
+                    split_offset=seed_offset,
                 )
             )
         metrics[domain] = evaluate_model(
@@ -476,7 +476,8 @@ def train_pretraining(
                 examples,
                 store.items_by_domain,
                 count=settings.num_eval_negatives,
-                seed=settings.seed + 10_000,
+                evaluation_seed=settings.evaluation_seed,
+                split_offset=10_000,
             )
             for domain, examples in validation_examples.items()
         }
@@ -485,7 +486,8 @@ def train_pretraining(
                 examples,
                 store.items_by_domain,
                 count=settings.num_eval_negatives,
-                seed=settings.seed + 20_000,
+                evaluation_seed=settings.evaluation_seed,
+                split_offset=20_000,
             )
             for domain, examples in test_examples.items()
         }
@@ -517,8 +519,13 @@ def train_pretraining(
         shared_sampler = SameDomainNegativeSampler(store.items_by_domain, settings.seed)
         samplers = {domain: shared_sampler for domain in domains}
         if validation_candidates is not None and test_candidates is not None:
-            run.write_json("validation_candidates.json", validation_candidates)
-            run.write_json("test_candidates.json", test_candidates)
+            run.write_json(
+                "evaluation_candidates.json",
+                evaluation_candidate_manifest(
+                    count=settings.num_eval_negatives,
+                    evaluation_seed=settings.evaluation_seed,
+                ),
+            )
         gradient_logger = None
         if settings.method in {"joint", "pcgrad"}:
             gradient_logger = GradientConflictLogger(
