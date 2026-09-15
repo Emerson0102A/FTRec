@@ -44,7 +44,7 @@ def _fixture(tmp_path: Path):
 
 @pytest.mark.parametrize("method", ("lora", "fullft"))
 def test_adaptation_run_writes_selected_checkpoint_and_result(
-    tmp_path: Path, method: str
+    tmp_path: Path, method: str, capsys
 ) -> None:
     from ftrec.training.adapt import AdaptSettings, train_adaptation
 
@@ -92,6 +92,9 @@ def test_adaptation_run_writes_selected_checkpoint_and_result(
     else:
         assert result.num_trainable_params == result.num_total_params
         assert all(".lora_" not in name for name in result.trainable_names)
+    stderr = capsys.readouterr().err
+    assert f"train {method} domain-0 seed-42" in stderr
+    assert "100%" in stderr
 
 
 def test_adaptation_rejects_pretrain_method_mismatch(tmp_path: Path) -> None:
@@ -135,5 +138,11 @@ def test_adapt_config_hash_ignores_output_control_fields(tmp_path: Path) -> None
     )
 
     assert adapt_config_hash(config, settings) == adapt_config_hash(
-        config, replace(settings, output_dir=tmp_path / "second", force=True)
+        config,
+        replace(
+            settings,
+            output_dir=tmp_path / "second",
+            force=True,
+            progress=False,
+        ),
     )

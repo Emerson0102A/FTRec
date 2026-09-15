@@ -36,6 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int)
     parser.add_argument("--device")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--no-progress", action="store_true")
     parser.add_argument("--force", action="store_true")
     return parser
 
@@ -106,6 +107,7 @@ def main(argv: list[str] | None = None) -> int:
         bf16=bool(config.get("bf16", False)),
         data_hash=_data_hash(processed_dir),
         force=args.force,
+        progress=bool(config.get("progress", True)) and not args.no_progress,
     )
     domains = (domain,) if method == "single" else tuple(sorted(store.items_by_domain))
     counts: dict[int, int] = {}

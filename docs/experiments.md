@@ -16,6 +16,26 @@ ftrec-smoke --config configs/smoke.yaml --output-dir results/smoke-final
 
 ## 正式服务器流程
 
+如果目标是先快速判断核心假设是否值得继续，先运行单 seed pilot。默认只运行
+seed 42 的 Joint、PCGrad，以及两个 backbone 在五个 domain 上的 LoRA rank
+1/2/4，共 32 个模型：
+
+```bash
+bash scripts/run_pilot.sh --dry-run
+bash scripts/run_pilot.sh
+```
+
+初步 LoRA 结果有信号后，补同一 seed 的 10 个 FullFT，已完成的 32 个组合会
+按指纹自动跳过：
+
+```bash
+bash scripts/run_pilot.sh --with-fullft
+ftrec-analyze --runs-root runs --output-dir results/pilot-seed-42
+```
+
+pilot 只用于筛选研究方向，不能替代三 seed 正式结论。需要复核随机稳定性时，
+再执行下面的完整矩阵。
+
 先查看计划，不写 checkpoint：
 
 ```bash
@@ -63,11 +83,17 @@ ftrec-adapt --config configs/experiment/lora.yaml --pretrain-method pcgrad --dom
 
 ## 性能与进度日志
 
-预处理会向 stderr 输出 JSON 进度，包括当前域、累计行数、吞吐、elapsed 和基于压缩输入字节的 ETA；k-core 每轮和导出阶段也会报告进度。训练每个 epoch 报告 elapsed、ETA 和验证指标。保留日志的推荐方式：
+预处理会向 stderr 显示三类 `tqdm` 进度条：每个域 gzip 压缩字节的读取进度、joint k-core 的轮次及当轮删除量、Parquet/sequence 的 interaction 导出进度。训练阶段显示每个模型 run 的 optimizer step 进度，以及每次 full/sampled evaluation 的用户进度；LoRA 和 FullFT 还会显示整个组合矩阵的已完成 run 数。阶段完成时继续输出 JSON，包括 elapsed、ETA、loss 和验证指标。保留日志的推荐方式：
 
 ```bash
 bash scripts/run_preprocess.sh 2>&1 | tee preprocess.log
 bash scripts/run_joint.sh 2>&1 | tee joint.log
+```
+
+所有训练命令同样支持 `--no-progress`。非交互任务如果不希望输出进度条，可使用：
+
+```bash
+bash scripts/run_preprocess.sh --no-progress
 ```
 
 正式配置默认 `evaluation_batch_size: 128`、`evaluation_chunk_size: 4096`。显存不足时先把 evaluation batch 调到 64 或 32；评测仍慢但显存充足时再增到 256。单张 4090D 默认顺序跑实验组合：SASRec 较小不代表多进程一定更快，Joint/PCGrad 和 full-catalog 评测通常已经能占满 GPU。只有通过 `nvidia-smi dmon` 确认 GPU 长期空闲、且单进程显存明显不足总显存的一半时，才值得手工测试两个组合并发。

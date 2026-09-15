@@ -16,6 +16,7 @@ from typing import Iterator
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+from tqdm.auto import tqdm
 
 from ftrec.artifacts import RunDirectory
 
@@ -50,6 +51,7 @@ class PreprocessSettings:
     batch_size: int = 100_000
     sqlite_path: Path | None = None
     force: bool = False
+    progress: bool = True
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "input_dir", Path(self.input_dir))
@@ -186,7 +188,21 @@ def ingest_amazon5(
         path = _input_path(settings, domain)
         _progress("preprocess_ingest_domain_start", domain=domain.name, path=str(path))
         batch: list[tuple[str, int, str, int, int]] = []
-        with gzip.open(path, "rt", encoding="utf-8", newline="") as stream:
+        with (
+            path.open("rb") as raw_stream,
+            tqdm.wrapattr(
+                raw_stream,
+                "read",
+                total=path.stat().st_size,
+                desc=f"ingest {domain.name}",
+                unit="B",
+                unit_scale=True,
+                disable=not settings.progress,
+            ) as monitored_stream,
+            gzip.open(
+                monitored_stream, "rt", encoding="utf-8", newline=""
+            ) as stream,
+        ):
             reader = csv.DictReader(stream)
             fields = set(reader.fieldnames or ())
             absent = sorted(REQUIRED_COLUMNS - fields)
@@ -222,27 +238,6 @@ def ingest_amazon5(
                     connection.executemany(upsert, batch)
                     connection.commit()
                     batch.clear()
-                    if counters[domain.name]["raw_rows"] % 1_000_000 < settings.batch_size:
-                        elapsed = time.perf_counter() - started
-                        try:
-                            current_bytes = int(stream.buffer.fileobj.tell())
-                        except (AttributeError, OSError):
-                            current_bytes = 0
-                        fraction = (
-                            min(completed_bytes + current_bytes, total_input_bytes)
-                            / total_input_bytes
-                            if total_input_bytes
-                            else 0.0
-                        )
-                        eta = elapsed * (1.0 - fraction) / fraction if fraction else None
-                        _progress(
-                            "preprocess_ingest_progress",
-                            domain=domain.name,
-                            elapsed_seconds=round(elapsed, 1),
-                            eta_seconds=round(eta, 1) if eta is not None else None,
-                            raw_rows=raw_rows,
-                            rows_per_second=round(raw_rows / elapsed, 1),
-                        )
         if batch:
             connection.executemany(upsert, batch)
             connection.commit()
@@ -280,7 +275,11 @@ def ingest_amazon5(
 
 
 def run_joint_k_core(
-    connection: sqlite3.Connection, user_min: int, item_min: int
+    connection: sqlite3.Connection,
+    user_min: int,
+    item_min: int,
+    *,
+    progress: bool = True,
 ) -> KCoreReport:
     if user_min < 1 or item_min < 1:
         raise ValueError("k-core thresholds must be positive")
@@ -288,29 +287,32 @@ def run_joint_k_core(
     started = time.perf_counter()
     iterations: list[KCoreIteration] = []
     index = 1
-    while True:
-        connection.execute("DROP TABLE IF EXISTS temp.low_users")
-        connection.execute("DROP TABLE IF EXISTS temp.low_items")
-        connection.execute(
-            "CREATE TEMP TABLE low_users AS "
-            "SELECT user_raw FROM interactions GROUP BY user_raw HAVING COUNT(*) < ?",
-            (user_min,),
-        )
-        connection.execute(
-            "CREATE TEMP TABLE low_items AS "
-            "SELECT domain_id, item_raw FROM interactions "
-            "GROUP BY domain_id, item_raw HAVING COUNT(*) < ?",
-            (item_min,),
-        )
-        connection.execute(
-            "CREATE INDEX temp.idx_low_users ON low_users(user_raw)"
-        )
-        connection.execute(
-            "CREATE INDEX temp.idx_low_items ON low_items(domain_id, item_raw)"
-        )
-        low_users = connection.execute("SELECT COUNT(*) FROM low_users").fetchone()[0]
-        low_items = connection.execute("SELECT COUNT(*) FROM low_items").fetchone()[0]
-        deleted = connection.execute(
+    with tqdm(
+        desc="joint k-core", unit="round", disable=not progress
+    ) as progress_bar:
+        while True:
+            connection.execute("DROP TABLE IF EXISTS temp.low_users")
+            connection.execute("DROP TABLE IF EXISTS temp.low_items")
+            connection.execute(
+                "CREATE TEMP TABLE low_users AS "
+                "SELECT user_raw FROM interactions GROUP BY user_raw HAVING COUNT(*) < ?",
+                (user_min,),
+            )
+            connection.execute(
+                "CREATE TEMP TABLE low_items AS "
+                "SELECT domain_id, item_raw FROM interactions "
+                "GROUP BY domain_id, item_raw HAVING COUNT(*) < ?",
+                (item_min,),
+            )
+            connection.execute(
+                "CREATE INDEX temp.idx_low_users ON low_users(user_raw)"
+            )
+            connection.execute(
+                "CREATE INDEX temp.idx_low_items ON low_items(domain_id, item_raw)"
+            )
+            low_users = connection.execute("SELECT COUNT(*) FROM low_users").fetchone()[0]
+            low_items = connection.execute("SELECT COUNT(*) FROM low_items").fetchone()[0]
+            deleted = connection.execute(
             """
             SELECT COUNT(*) FROM interactions AS edge
             WHERE edge.user_raw IN (SELECT user_raw FROM low_users)
@@ -319,9 +321,9 @@ def run_joint_k_core(
                     WHERE item.domain_id=edge.domain_id AND item.item_raw=edge.item_raw
                )
             """
-        ).fetchone()[0]
-        if deleted:
-            connection.execute(
+            ).fetchone()[0]
+            if deleted:
+                connection.execute(
                 """
                 DELETE FROM interactions
                 WHERE user_raw IN (SELECT user_raw FROM low_users)
@@ -331,20 +333,24 @@ def run_joint_k_core(
                           AND item.item_raw=interactions.item_raw
                    )
                 """
+                )
+                connection.commit()
+            iterations.append(KCoreIteration(index, low_users, low_items, deleted))
+            progress_bar.update(1)
+            progress_bar.set_postfix(
+                deleted=deleted, low_items=low_items, low_users=low_users
             )
-            connection.commit()
-        iterations.append(KCoreIteration(index, low_users, low_items, deleted))
-        _progress(
-            "preprocess_kcore_iteration",
-            deleted_edges=deleted,
-            elapsed_seconds=round(time.perf_counter() - started, 1),
-            iteration=index,
-            low_items=low_items,
-            low_users=low_users,
-        )
-        if deleted == 0:
-            break
-        index += 1
+            _progress(
+                "preprocess_kcore_iteration",
+                deleted_edges=deleted,
+                elapsed_seconds=round(time.perf_counter() - started, 1),
+                iteration=index,
+                low_items=low_items,
+                low_users=low_users,
+            )
+            if deleted == 0:
+                break
+            index += 1
     assert_k_core_invariants(connection, user_min, item_min)
     retained = connection.execute("SELECT COUNT(*) FROM interactions").fetchone()[0]
     return KCoreReport(tuple(iterations), initial, retained)
@@ -492,7 +498,11 @@ INTERACTION_SCHEMA = pa.schema(
 
 
 def _write_interactions_and_sequences(
-    connection: sqlite3.Connection, output_dir: Path, *, row_group_size: int
+    connection: sqlite3.Connection,
+    output_dir: Path,
+    *,
+    row_group_size: int,
+    progress: bool = True,
 ) -> tuple[int, int]:
     parquet_path = output_dir / "interactions.parquet"
     raw, compressed, sequence_stream = _gzip_text_writer(
@@ -507,6 +517,15 @@ def _write_interactions_and_sequences(
     )
     users = interactions = 0
     buffered: list[dict[str, object]] = []
+    total_interactions = connection.execute(
+        "SELECT COUNT(*) FROM interactions"
+    ).fetchone()[0]
+    progress_bar = tqdm(
+        total=total_interactions,
+        desc="export interactions",
+        unit="rows",
+        disable=not progress,
+    )
     try:
         for group in _iter_user_groups(connection):
             serializable = [
@@ -537,12 +556,14 @@ def _write_interactions_and_sequences(
             )
             users += 1
             interactions += len(group)
+            progress_bar.update(len(group))
         if buffered:
             writer.write_table(
                 pa.Table.from_pylist(buffered, schema=INTERACTION_SCHEMA),
                 row_group_size=row_group_size,
             )
     finally:
+        progress_bar.close()
         writer.close()
         sequence_stream.close()
         compressed.close()
@@ -652,7 +673,10 @@ def export_processed_dataset(
     _create_stable_mappings(connection)
     _write_mapping_files(connection, target)
     users, interactions = _write_interactions_and_sequences(
-        connection, target, row_group_size=settings.batch_size
+        connection,
+        target,
+        row_group_size=settings.batch_size,
+        progress=settings.progress,
     )
     _write_statistics(connection, target)
     items = connection.execute("SELECT COUNT(*) FROM item_map").fetchone()[0]
@@ -874,6 +898,7 @@ def preprocess_amazon5(settings: PreprocessSettings) -> PreprocessResult:
                 connection,
                 settings.min_user_interactions,
                 settings.min_item_interactions,
+                progress=settings.progress,
             )
             export = export_processed_dataset(connection, run.path, ingest, kcore, settings)
         finally:

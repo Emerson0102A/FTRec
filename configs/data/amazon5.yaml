@@ -3,3 +3,4 @@ output_dir: data/processed/amazon5
 min_user_interactions: 10
 min_item_interactions: 15
 batch_size: 100000
+progress: true

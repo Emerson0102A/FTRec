@@ -116,7 +116,9 @@ def test_single_step_updates_model_with_sparse_and_dense_optimizers() -> None:
     assert not torch.equal(before, model.item_embedding.weight)
 
 
-def test_joint_pretraining_run_writes_checkpoints_metrics_and_gradients(tmp_path: Path) -> None:
+def test_joint_pretraining_run_writes_checkpoints_metrics_and_gradients(
+    tmp_path: Path, capsys
+) -> None:
     from ftrec.data.datasets import SequenceRecord, SequenceStore
     from ftrec.models.sasrec import SASRecConfig
     from ftrec.training.pretrain import PretrainSettings, train_pretraining
@@ -168,6 +170,9 @@ def test_joint_pretraining_run_writes_checkpoints_metrics_and_gradients(tmp_path
     )
     assert set(epoch["domain_losses"]) == {"0", "1", "2", "3", "4"}
     assert len(result.test_metrics) == 5
+    stderr = capsys.readouterr().err
+    assert "train joint seed-42" in stderr
+    assert "100%" in stderr
 
 
 def test_pretrain_config_hash_ignores_output_control_fields(tmp_path: Path) -> None:
@@ -178,5 +183,11 @@ def test_pretrain_config_hash_ignores_output_control_fields(tmp_path: Path) -> N
     settings = PretrainSettings(method="joint", output_dir=tmp_path / "first")
 
     assert pretrain_config_hash(model, settings) == pretrain_config_hash(
-        model, replace(settings, output_dir=tmp_path / "second", force=True)
+        model,
+        replace(
+            settings,
+            output_dir=tmp_path / "second",
+            force=True,
+            progress=False,
+        ),
     )

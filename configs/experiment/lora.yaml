@@ -9,6 +9,7 @@ seeds: [42, 43, 44]
 alpha: null
 device: cuda
 bf16: true
+progress: true
 batch_size: 128
 steps_per_epoch: 250
 epochs: 50

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 import torch
+from tqdm.auto import tqdm
 
 from ftrec.data.datasets import TargetExample
 
@@ -57,6 +58,8 @@ def evaluate_model(
     batch_size: int = 128,
     k: int = 10,
     device: str | torch.device = "cpu",
+    progress: bool = False,
+    description: str = "evaluate",
 ) -> dict[str, float | int | str]:
     if protocol not in {"full", "sampled"}:
         raise ValueError(f"unsupported evaluation protocol: {protocol}")
@@ -68,6 +71,14 @@ def evaluate_model(
     was_training = bool(getattr(model, "training", False))
     if hasattr(model, "eval"):
         model.eval()
+    progress_bar = tqdm(
+        total=len(examples),
+        desc=description,
+        unit="users",
+        mininterval=1.0,
+        dynamic_ncols=True,
+        disable=not progress,
+    )
     try:
         if protocol == "full" and hasattr(model, "final_state") and hasattr(model, "item_embedding"):
             _evaluate_full_batched(
@@ -78,6 +89,7 @@ def evaluate_model(
                 chunk_size=chunk_size,
                 batch_size=batch_size,
                 device=torch.device(device),
+                progress_bar=progress_bar,
             )
             examples = ()
         for example in examples:
@@ -100,7 +112,9 @@ def evaluate_model(
                 chunk_size=chunk_size,
             )
             metrics.add_rank(rank)
+            progress_bar.update(1)
     finally:
+        progress_bar.close()
         if was_training and hasattr(model, "train"):
             model.train()
     result = metrics.compute()
@@ -117,12 +131,14 @@ def _evaluate_full_batched(
     chunk_size: int,
     batch_size: int,
     device: torch.device,
+    progress_bar: tqdm,
 ) -> None:
     by_domain: dict[int, list[TargetExample]] = {}
     for example in examples:
         catalog = items_by_domain.get(example.target_domain, ())
         if not catalog or example.positive_item not in catalog:
             metrics.skip()
+            progress_bar.update(1)
         else:
             by_domain.setdefault(example.target_domain, []).append(example)
     with torch.no_grad():
@@ -172,3 +188,4 @@ def _evaluate_full_batched(
                     ranks += ((ahead | tied_ahead) & eligible & not_target).sum(dim=1)
                 for rank in ranks.cpu().tolist():
                     metrics.add_rank(int(rank))
+                progress_bar.update(len(batch))

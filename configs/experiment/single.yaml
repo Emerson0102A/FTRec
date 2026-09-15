@@ -5,6 +5,7 @@ domain: 0
 seed: 42
 device: cuda
 bf16: true
+progress: true
 batch_size: 128
 steps_per_epoch: 1000
 epochs: 100

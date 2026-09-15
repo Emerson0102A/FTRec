@@ -49,7 +49,7 @@ def test_chunk_size_does_not_change_rank() -> None:
     assert rank_ground_truth_chunked(**arguments, chunk_size=4) == 2
 
 
-def test_full_catalog_evaluation_encodes_each_context_batch_once() -> None:
+def test_full_catalog_evaluation_encodes_each_context_batch_once(capsys) -> None:
     from ftrec.evaluation.ranking import evaluate_model
 
     class CountingSASRec(SASRec):
@@ -83,7 +83,12 @@ def test_full_catalog_evaluation_encodes_each_context_batch_once() -> None:
         protocol="full",
         chunk_size=10,
         batch_size=4,
+        progress=True,
+        description="evaluate domain-0",
     )
 
     assert result["num_eval_users"] == 4
     assert model.encode_calls == 1
+    stderr = capsys.readouterr().err
+    assert "evaluate domain-0" in stderr
+    assert "100%" in stderr
