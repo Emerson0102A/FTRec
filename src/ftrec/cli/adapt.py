@@ -30,6 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pretrain-method", choices=("joint", "pcgrad"))
     parser.add_argument("--domain", type=int)
     parser.add_argument("--rank", type=int)
+    parser.add_argument("--ranks", type=int, nargs="+")
     parser.add_argument("--seed", type=int)
     parser.add_argument("--device")
     parser.add_argument("--dry-run", action="store_true")
@@ -96,13 +97,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     ranks: tuple[int | None, ...]
     if method == "lora":
-        ranks = tuple(
-            int(value)
-            for value in _list_or_selected(config.get("ranks", (1, 2, 4, 8, 16)), args.rank)
-        )
+        if args.rank is not None and args.ranks is not None:
+            raise ValueError("--rank and --ranks cannot be used together")
+        if args.ranks is not None:
+            ranks = tuple(args.ranks)
+        else:
+            ranks = tuple(
+                int(value)
+                for value in _list_or_selected(
+                    config.get("ranks", (1, 2, 4, 8, 16)), args.rank
+                )
+            )
     else:
-        if args.rank is not None:
-            raise ValueError("--rank is only valid with LoRA")
+        if args.rank is not None or args.ranks is not None:
+            raise ValueError("--rank and --ranks are only valid with LoRA")
         ranks = (None,)
     combinations = len(pretrain_methods) * len(domains) * len(ranks) * len(seeds)
     progress_enabled = bool(config.get("progress", True)) and not args.no_progress

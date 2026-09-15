@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gzip
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -14,6 +15,7 @@ CLI_MODULES = (
     "ftrec.cli.pretrain",
     "ftrec.cli.adapt",
     "ftrec.cli.analyze",
+    "ftrec.cli.pilot",
     "ftrec.cli.smoke",
 )
 
@@ -80,6 +82,7 @@ def test_server_scripts_are_fail_fast_and_stage_scoped() -> None:
         "run_lora.sh",
         "run_fullft.sh",
         "run_analysis.sh",
+        "run_pilot.sh",
         "check_environment.sh",
     )
     for name in names:
@@ -163,3 +166,102 @@ def test_adaptation_dry_run_reports_matrix_progress(tmp_path: Path) -> None:
     assert result.returncode == 2
     assert "fullft matrix" in result.stderr
     assert "100%" in result.stderr
+
+
+def test_adaptation_rank_subset_limits_the_matrix(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    processed.mkdir()
+    with gzip.open(processed / "sequences.jsonl.gz", "wt", encoding="utf-8") as stream:
+        stream.write(
+            '{"domain_ids":[0,0,0],"item_ids":[1,2,3],"splits":["train","valid","test"],"timestamps":[1,2,3],"user_id":1}\n'
+        )
+    with gzip.open(processed / "items.csv.gz", "wt", encoding="utf-8") as stream:
+        stream.write("item_id,domain_id,domain,parent_asin\n1,0,Health,item-1\n")
+    (processed / "manifest.json").write_text("{}\n", encoding="utf-8")
+    config_path = tmp_path / "lora.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "processed_dir": str(processed),
+                "base_root": str(tmp_path / "runs"),
+                "output_root": str(tmp_path / "runs"),
+                "method": "lora",
+                "pretrain_methods": ["joint"],
+                "domains": [0],
+                "ranks": [1, 2, 4, 8, 16],
+                "seeds": [42],
+                "device": "cpu",
+                "bf16": False,
+                "progress": False,
+                "batch_size": 1,
+                "steps_per_epoch": 1,
+                "epochs": 1,
+                "patience": 1,
+                "lr": 0.001,
+            }
+        ),
+        encoding="utf-8",
+    )
+    model_path = tmp_path / "model.yaml"
+    model_path.write_text(
+        yaml.safe_dump(
+            {
+                "hidden_size": 4,
+                "num_blocks": 1,
+                "num_heads": 1,
+                "dropout": 0.0,
+                "maxlen": 3,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ftrec.cli.adapt",
+            "--config",
+            str(config_path),
+            "--model-config",
+            str(model_path),
+            "--ranks",
+            "1",
+            "2",
+            "4",
+            "--dry-run",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    payload = json.loads(result.stdout)
+    assert payload["combinations"] == 3
+    assert [run["rank"] for run in payload["runs"]] == [1, 2, 4]
+
+
+@pytest.mark.parametrize(
+    ("extra_args", "expected_runs", "expected_stages"),
+    [
+        ([], 32, ["joint", "pcgrad", "lora"]),
+        (["--with-fullft"], 42, ["joint", "pcgrad", "lora", "fullft"]),
+    ],
+)
+def test_pilot_dry_run_plans_the_approved_single_seed_matrix(
+    extra_args: list[str], expected_runs: int, expected_stages: list[str]
+) -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "ftrec.cli.pilot", "--dry-run", *extra_args],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["seed"] == 42
+    assert payload["ranks"] == [1, 2, 4]
+    assert payload["model_runs"] == expected_runs
+    assert [stage["stage"] for stage in payload["stages"]] == expected_stages

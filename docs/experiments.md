@@ -16,6 +16,26 @@ ftrec-smoke --config configs/smoke.yaml --output-dir results/smoke-final
 
 ## 正式服务器流程
 
+如果目标是先快速判断核心假设是否值得继续，先运行单 seed pilot。默认只运行
+seed 42 的 Joint、PCGrad，以及两个 backbone 在五个 domain 上的 LoRA rank
+1/2/4，共 32 个模型：
+
+```bash
+bash scripts/run_pilot.sh --dry-run
+bash scripts/run_pilot.sh
+```
+
+初步 LoRA 结果有信号后，补同一 seed 的 10 个 FullFT，已完成的 32 个组合会
+按指纹自动跳过：
+
+```bash
+bash scripts/run_pilot.sh --with-fullft
+ftrec-analyze --runs-root runs --output-dir results/pilot-seed-42
+```
+
+pilot 只用于筛选研究方向，不能替代三 seed 正式结论。需要复核随机稳定性时，
+再执行下面的完整矩阵。
+
 先查看计划，不写 checkpoint：
 
 ```bash
