@@ -63,14 +63,14 @@ ftrec-adapt --config configs/experiment/lora.yaml --pretrain-method pcgrad --dom
 
 ## 性能与进度日志
 
-预处理会向 stderr 显示三类 `tqdm` 进度条：每个域 gzip 压缩字节的读取进度、joint k-core 的轮次及当轮删除量、Parquet/sequence 的 interaction 导出进度。阶段完成时还会输出 JSON，包括累计行数、吞吐、elapsed 和 ETA。训练每个 epoch 报告 elapsed、ETA 和验证指标。保留日志的推荐方式：
+预处理会向 stderr 显示三类 `tqdm` 进度条：每个域 gzip 压缩字节的读取进度、joint k-core 的轮次及当轮删除量、Parquet/sequence 的 interaction 导出进度。训练阶段显示每个模型 run 的 optimizer step 进度，以及每次 full/sampled evaluation 的用户进度；LoRA 和 FullFT 还会显示整个组合矩阵的已完成 run 数。阶段完成时继续输出 JSON，包括 elapsed、ETA、loss 和验证指标。保留日志的推荐方式：
 
 ```bash
 bash scripts/run_preprocess.sh 2>&1 | tee preprocess.log
 bash scripts/run_joint.sh 2>&1 | tee joint.log
 ```
 
-非交互任务如果不希望输出进度条，可使用：
+所有训练命令同样支持 `--no-progress`。非交互任务如果不希望输出进度条，可使用：
 
 ```bash
 bash scripts/run_preprocess.sh --no-progress

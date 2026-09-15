@@ -6,6 +6,8 @@ import argparse
 import json
 from pathlib import Path
 
+from tqdm.auto import tqdm
+
 from ftrec.artifacts import sha256_file
 from ftrec.config import load_config
 from ftrec.data.datasets import SequenceStore
@@ -31,6 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int)
     parser.add_argument("--device")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--no-progress", action="store_true")
     parser.add_argument("--force", action="store_true")
     return parser
 
@@ -102,6 +105,7 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--rank is only valid with LoRA")
         ranks = (None,)
     combinations = len(pretrain_methods) * len(domains) * len(ranks) * len(seeds)
+    progress_enabled = bool(config.get("progress", True)) and not args.no_progress
     if args.output_dir is not None and combinations != 1:
         raise ValueError("--output-dir requires selecting one exact combination")
     if args.base_checkpoint is not None and combinations != 1:
@@ -116,6 +120,14 @@ def main(argv: list[str] | None = None) -> int:
     data_hash = _data_hash(processed_dir)
     reports: list[dict[str, object]] = []
     failures = 0
+    matrix_progress = tqdm(
+        total=combinations,
+        desc=f"{method} matrix",
+        unit="run",
+        mininterval=1.0,
+        dynamic_ncols=True,
+        disable=not progress_enabled,
+    )
     for pretrain_method in pretrain_methods:
         for domain in domains:
             for rank in ranks:
@@ -171,6 +183,9 @@ def main(argv: list[str] | None = None) -> int:
                         bf16=bool(config.get("bf16", False)),
                         data_hash=data_hash,
                         force=args.force,
+                        progress=(
+                            progress_enabled
+                        ),
                     )
                     config_hash = adapt_config_hash(model_config, settings)
                     decision = "create"
@@ -201,14 +216,24 @@ def main(argv: list[str] | None = None) -> int:
                     reports.append(report)
                     if args.dry_run or decision == "skip":
                         failures += decision in {"missing-base", "conflict"}
+                        matrix_progress.set_postfix(
+                            decision=decision, domain=domain, seed=seed
+                        )
+                        matrix_progress.update(1)
                         continue
                     if decision != "create":
+                        matrix_progress.close()
                         raise FileExistsError(
                             f"cannot run {output}: {decision}; use --force for conflicts"
                         )
                     result = train_adaptation(store, model_config, base, settings)
                     report["best_checkpoint"] = str(result.best_checkpoint)
                     report["decision"] = "completed"
+                    matrix_progress.set_postfix(
+                        decision="completed", domain=domain, seed=seed
+                    )
+                    matrix_progress.update(1)
+    matrix_progress.close()
     print(
         json.dumps(
             {"combinations": combinations, "runs": reports},

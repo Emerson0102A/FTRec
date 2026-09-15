@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 import torch
+from tqdm.auto import tqdm
 
 from ftrec.artifacts import RunDirectory
 from ftrec.config import canonical_hash, canonical_json
@@ -69,6 +70,7 @@ class PretrainSettings:
     bf16: bool = False
     data_hash: str = "unknown"
     force: bool = False
+    progress: bool = True
 
     def __post_init__(self) -> None:
         if self.method not in {"single", "joint", "pcgrad"}:
@@ -110,6 +112,7 @@ def pretrain_config_hash(
     training = asdict(settings)
     training.pop("output_dir")
     training.pop("force")
+    training.pop("progress")
     return canonical_hash({"model": asdict(model_config), "training": training})
 
 
@@ -389,6 +392,8 @@ def _evaluate_domains(
             chunk_size=settings.evaluation_chunk_size,
             batch_size=settings.evaluation_batch_size,
             device=settings.device,
+            progress=settings.progress,
+            description=f"evaluate domain-{domain}",
         )
     return metrics
 
@@ -524,6 +529,14 @@ def train_pretraining(
         global_step = 0
         last_epoch = 0
         training_started = time.perf_counter()
+        training_progress = tqdm(
+            total=total_steps,
+            desc=f"train {settings.method} seed-{settings.seed}",
+            unit="step",
+            mininterval=1.0,
+            dynamic_ncols=True,
+            disable=not settings.progress,
+        )
         for epoch in range(1, settings.epochs + 1):
             last_epoch = epoch
             losses: list[float] = []
@@ -580,6 +593,7 @@ def train_pretraining(
                         domain_loss_values[domain].append(value)
                     norms.append(step_result.gradient_norm)
                 global_step += 1
+                training_progress.update(1)
 
             final_validation = _evaluate_domains(
                 model,
@@ -651,8 +665,17 @@ def train_pretraining(
                 training_state={"epoch": epoch, "global_step": global_step},
                 optimizer_state=optimizers.state_dict(),
             )
+            training_progress.set_postfix(
+                epoch=epoch,
+                loss=f"{epoch_record['loss']:.4f}",
+                val_ndcg=f"{validation_ndcg:.4f}",
+            )
             if stopping.should_stop:
+                training_progress.total = global_step
+                training_progress.refresh()
                 break
+
+        training_progress.close()
 
         if not (run.path / "best.pt").exists():
             save_checkpoint(

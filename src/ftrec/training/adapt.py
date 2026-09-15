@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import torch
+from tqdm.auto import tqdm
 
 from ftrec.artifacts import RunDirectory, sha256_file
 from ftrec.config import canonical_hash, canonical_json
@@ -55,6 +56,7 @@ class AdaptSettings:
     bf16: bool = False
     data_hash: str = "unknown"
     force: bool = False
+    progress: bool = True
 
     def __post_init__(self) -> None:
         if self.method not in {"lora", "fullft"}:
@@ -95,6 +97,7 @@ def adapt_config_hash(model_config: SASRecConfig, settings: AdaptSettings) -> st
     training = asdict(settings)
     training.pop("output_dir")
     training.pop("force")
+    training.pop("progress")
     return canonical_hash({"model": asdict(model_config), "training": training})
 
 
@@ -145,6 +148,8 @@ def _evaluate(
         chunk_size=settings.evaluation_chunk_size,
         batch_size=settings.evaluation_batch_size,
         device=settings.device,
+        progress=settings.progress,
+        description=f"evaluate domain-{settings.domain}",
     )
 
 
@@ -307,6 +312,17 @@ def train_adaptation(
 
         last_epoch = 0
         training_started = time.perf_counter()
+        training_progress = tqdm(
+            total=settings.epochs * settings.steps_per_epoch,
+            desc=(
+                f"train {settings.method} domain-{settings.domain} "
+                f"seed-{settings.seed}"
+            ),
+            unit="step",
+            mininterval=1.0,
+            dynamic_ncols=True,
+            disable=not settings.progress,
+        )
         for epoch in range(1, settings.epochs + 1):
             last_epoch = epoch
             losses: list[float] = []
@@ -329,6 +345,7 @@ def train_adaptation(
                 losses.append(step.loss)
                 norms.append(step.gradient_norm)
                 global_step += 1
+                training_progress.update(1)
             final_validation = _evaluate(
                 model,
                 validation_examples,
@@ -379,8 +396,17 @@ def train_adaptation(
             if stopping.update(epoch, selected_metric):
                 save_selected(run.path / "best.pt", epoch)
             save_selected(run.path / "last.pt", epoch)
+            training_progress.set_postfix(
+                epoch=epoch,
+                loss=f"{record['loss']:.4f}",
+                val_ndcg=f"{selected_metric:.4f}",
+            )
             if stopping.should_stop:
+                training_progress.total = global_step
+                training_progress.refresh()
                 break
+
+        training_progress.close()
 
         if not (run.path / "best.pt").exists():
             save_selected(run.path / "best.pt", last_epoch)
