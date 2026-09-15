@@ -25,8 +25,8 @@ from ftrec.data.datasets import (
 from ftrec.data.sampling import (
     BalancedBatchPlan,
     SameDomainNegativeSampler,
-    build_evaluation_candidates,
     evaluation_candidate_manifest,
+    resolve_evaluation_candidates,
 )
 from ftrec.evaluation.ranking import evaluate_model
 from ftrec.models.sasrec import SASRec, SASRecConfig
@@ -56,7 +56,7 @@ class PretrainSettings:
     seed: int = 42
     domain: int | None = None
     batch_size: int = 128
-    steps_per_epoch: int = 100
+    steps_per_epoch: int | None = 100
     epochs: int = 100
     patience: int = 10
     lr: float = 1e-3
@@ -70,6 +70,8 @@ class PretrainSettings:
     evaluation_chunk_size: int = 4096
     evaluation_batch_size: int = 128
     gradient_log_interval: int = 1
+    gradient_conflict_enabled: bool = True
+    gradient_conflict_ema_beta: float = 0.9
     bf16: bool = False
     data_hash: str = "unknown"
     force: bool = False
@@ -84,9 +86,11 @@ class PretrainSettings:
             raise ValueError("domain is only valid for single-domain pretraining")
         if self.domain is not None and self.domain < 0:
             raise ValueError("domain must be non-negative")
-        for name in ("batch_size", "steps_per_epoch", "epochs", "patience"):
+        for name in ("batch_size", "epochs", "patience"):
             if getattr(self, name) < 1:
                 raise ValueError(f"{name} must be positive")
+        if self.steps_per_epoch is not None and self.steps_per_epoch < 1:
+            raise ValueError("steps_per_epoch must be positive or automatic")
         if self.evaluation_protocol not in {"full", "sampled"}:
             raise ValueError("evaluation_protocol must be 'full' or 'sampled'")
         if (
@@ -97,6 +101,8 @@ class PretrainSettings:
             raise ValueError("evaluation sizes must be positive")
         if self.gradient_log_interval < 1:
             raise ValueError("gradient_log_interval must be positive")
+        if not 0 <= self.gradient_conflict_ema_beta < 1:
+            raise ValueError("gradient_conflict_ema_beta must be in [0, 1)")
 
 
 @dataclass(frozen=True)
@@ -134,6 +140,17 @@ class SingleTaskStepResult:
     loss: float
     gradient_norm: float
     initialization_hash: str
+
+
+def resolve_pretrain_steps_per_epoch(
+    example_counts: Mapping[int, int], *, batch_size: int, requested: int | None
+) -> int:
+    """Define one balanced epoch as one dataset-sized amount of target work."""
+    if requested is not None:
+        return requested
+    if not example_counts:
+        raise ValueError("cannot resolve steps without training examples")
+    return max(1, math.ceil(sum(example_counts.values()) / (len(example_counts) * batch_size)))
 
 
 def prepare_batch_manifest(
@@ -274,7 +291,6 @@ def run_multitask_step(
             epoch=epoch,
             step=global_step,
             raw=raw,
-            projected=gradients_for_step if method == "pcgrad" else None,
             projection_counts=projection_counts,
             groups=groups,
         )
@@ -340,16 +356,20 @@ def _examples_for_domains(
 
 
 def _sampled_candidates(
+    store: SequenceStore,
     examples: Sequence[TargetExample],
-    items_by_domain: Mapping[int, Sequence[int]],
     *,
+    split: str,
+    domain: int,
     count: int,
     evaluation_seed: int,
     split_offset: int,
-) -> dict[int, tuple[int, ...]]:
-    return build_evaluation_candidates(
+) -> object:
+    return resolve_evaluation_candidates(
+        store,
         examples,
-        items_by_domain,
+        split=split,
+        domain=domain,
         count=count,
         evaluation_seed=evaluation_seed,
         split_offset=split_offset,
@@ -376,8 +396,14 @@ def _evaluate_domains(
                 sampled_candidates_by_domain[domain]
                 if sampled_candidates_by_domain is not None
                 else _sampled_candidates(
+                    # This fallback is retained for callers that do not prepare
+                    # candidates up front; production passes the resolved map.
+                    # Synthetic stores have no processed directory and use the
+                    # deterministic in-memory recipe.
+                    SequenceStore((), dict(items_by_domain)),
                     examples,
-                    items_by_domain,
+                    split="valid" if seed_offset == 10_000 else "test",
+                    domain=domain,
                     count=settings.num_eval_negatives,
                     evaluation_seed=settings.evaluation_seed,
                     split_offset=seed_offset,
@@ -446,6 +472,11 @@ def train_pretraining(
     empty = [domain for domain, examples in train_examples.items() if not examples]
     if empty:
         raise ValueError(f"no training examples for domains: {empty}")
+    steps_per_epoch = resolve_pretrain_steps_per_epoch(
+        {domain: len(examples) for domain, examples in train_examples.items()},
+        batch_size=settings.batch_size,
+        requested=settings.steps_per_epoch,
+    )
 
     optimizer_settings = OptimizerSettings(
         lr=settings.lr,
@@ -473,8 +504,10 @@ def train_pretraining(
     if settings.evaluation_protocol == "sampled":
         validation_candidates = {
             domain: _sampled_candidates(
+                store,
                 examples,
-                store.items_by_domain,
+                split="valid",
+                domain=domain,
                 count=settings.num_eval_negatives,
                 evaluation_seed=settings.evaluation_seed,
                 split_offset=10_000,
@@ -483,8 +516,10 @@ def train_pretraining(
         }
         test_candidates = {
             domain: _sampled_candidates(
+                store,
                 examples,
-                store.items_by_domain,
+                split="test",
+                domain=domain,
                 count=settings.num_eval_negatives,
                 evaluation_seed=settings.evaluation_seed,
                 split_offset=20_000,
@@ -503,7 +538,7 @@ def train_pretraining(
             ),
         )
         run.write_json("environment.json", runtime_metadata(device))
-        total_steps = settings.epochs * settings.steps_per_epoch
+        total_steps = settings.epochs * steps_per_epoch
         manifest = prepare_batch_manifest(
             run.path / "batch_manifest.json",
             train_examples,
@@ -527,10 +562,13 @@ def train_pretraining(
                 ),
             )
         gradient_logger = None
-        if settings.method in {"joint", "pcgrad"}:
+        if settings.gradient_conflict_enabled and settings.method in {"joint", "pcgrad"}:
+            from ftrec.data.amazon import DOMAIN_BY_ID
+
             gradient_logger = GradientConflictLogger(
                 run.path / "gradient_conflicts.jsonl",
-                [str(domain) for domain in domains],
+                [DOMAIN_BY_ID[domain].name if domain in DOMAIN_BY_ID else str(domain) for domain in domains],
+                ema_beta=settings.gradient_conflict_ema_beta,
             )
         metrics_path = run.path / "metrics.jsonl"
         global_step = 0
@@ -551,7 +589,7 @@ def train_pretraining(
             domain_loss_values: dict[int, list[float]] = {
                 domain: [] for domain in domains
             }
-            for _ in range(settings.steps_per_epoch):
+            for _ in range(steps_per_epoch):
                 batches = next(batch_steps)
                 if settings.method == "single":
                     domain = domains[0]
@@ -683,6 +721,9 @@ def train_pretraining(
                 break
 
         training_progress.close()
+
+        if gradient_logger is not None:
+            gradient_logger.finalize()
 
         if not (run.path / "best.pt").exists():
             save_checkpoint(

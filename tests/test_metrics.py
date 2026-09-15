@@ -24,3 +24,21 @@ def test_accumulator_tracks_skips_without_changing_denominator() -> None:
     result = metrics.compute()
     assert result == pytest.approx({"HR@10": 0.5, "NDCG@10": 0.5, "num_eval_users": 2, "num_skipped_users": 1})
 
+
+def test_evaluation_reports_paper_metrics_at_five_and_ten() -> None:
+    """Catch omitting the paper's HR/NDCG@5 metrics while selecting at @10."""
+    from ftrec.evaluation.metrics import RankingMetricsAtKs
+
+    metrics = RankingMetricsAtKs((5, 10))
+    metrics.add_rank(7)
+
+    assert metrics.compute() == pytest.approx(
+        {
+            "HR@5": 0.0,
+            "NDCG@5": 0.0,
+            "HR@10": 1.0,
+            "NDCG@10": 1 / math.log2(9),
+            "num_eval_users": 1,
+            "num_skipped_users": 0,
+        }
+    )

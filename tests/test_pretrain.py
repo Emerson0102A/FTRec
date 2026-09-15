@@ -5,6 +5,21 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+
+
+def test_auto_pretrain_steps_cover_one_balanced_dataset_pass() -> None:
+    """Catch paper epochs retaining the old arbitrary 1,000-step definition."""
+    from ftrec.training.pretrain import resolve_pretrain_steps_per_epoch
+
+    assert resolve_pretrain_steps_per_epoch(
+        {0: 500, 1: 300, 2: 200}, batch_size=100, requested=None
+    ) == 4
+    assert resolve_pretrain_steps_per_epoch(
+        {0: 500}, batch_size=100, requested=None
+    ) == 5
+    assert resolve_pretrain_steps_per_epoch(
+        {0: 500, 1: 300}, batch_size=100, requested=7
+    ) == 7
 import torch
 
 from ftrec.data.datasets import TargetExample
@@ -94,6 +109,102 @@ def test_joint_and_pcgrad_observe_same_losses_and_raw_cosines() -> None:
     assert pcgrad.projected_cosine is not None
 
 
+@pytest.mark.parametrize("method", ["joint", "pcgrad"])
+def test_multitask_logging_records_projection_input_raw_gradients(
+    method: str, tmp_path: Path
+) -> None:
+    """Catch logging PCGrad-projected gradients under the raw analysis fields."""
+    import json
+
+    from ftrec.data.sampling import BalancedBatchManifest
+    from ftrec.training.engine import OptimizerSettings, build_optimizers
+    from ftrec.training.pcgrad import GradientConflictLogger
+    from ftrec.training.pretrain import run_multitask_step
+
+    examples = _examples_by_domain()
+    catalogs = {
+        domain: tuple(range(domain * 5 + 1, domain * 5 + 6))
+        for domain in range(5)
+    }
+    manifest = BalancedBatchManifest.create(examples, batch_size=1, steps=1, seed=42)
+    model = _model()
+    logger = GradientConflictLogger(
+        tmp_path / "gradient_conflicts.jsonl", tuple(str(i) for i in range(5))
+    )
+
+    result = run_multitask_step(
+        model,
+        examples,
+        catalogs,
+        manifest.steps[0],
+        build_optimizers(model, OptimizerSettings(lr=1e-3)),
+        method=method,
+        seed=42,
+        global_step=0,
+        grad_clip_norm=5.0,
+        gradient_logger=logger,
+        compute_cosine=True,
+    )
+    record = json.loads(
+        (tmp_path / "gradient_conflicts.jsonl").read_text(encoding="utf-8")
+    )
+
+    for actual, expected in zip(record["raw_cosine"]["full"], result.raw_cosine, strict=True):
+        assert actual == pytest.approx(expected)
+    assert "projected_cosine" not in record
+
+
+@pytest.mark.parametrize("method", ["joint", "pcgrad"])
+def test_logging_toggle_does_not_change_optimizer_step(
+    method: str, tmp_path: Path
+) -> None:
+    """Catch diagnostics mutating gradients, RNG, clipping, or optimizer updates."""
+    from ftrec.data.sampling import BalancedBatchManifest
+    from ftrec.training.engine import OptimizerSettings, build_optimizers
+    from ftrec.training.pcgrad import GradientConflictLogger
+    from ftrec.training.pretrain import run_multitask_step
+
+    examples = _examples_by_domain()
+    catalogs = {
+        domain: tuple(range(domain * 5 + 1, domain * 5 + 6))
+        for domain in range(5)
+    }
+    batches = BalancedBatchManifest.create(
+        examples, batch_size=1, steps=1, seed=42
+    ).steps[0]
+    without_logging = _model()
+    with_logging = copy.deepcopy(without_logging)
+
+    run_multitask_step(
+        without_logging,
+        examples,
+        catalogs,
+        batches,
+        build_optimizers(without_logging, OptimizerSettings(lr=1e-3)),
+        method=method,
+        seed=42,
+        global_step=0,
+        grad_clip_norm=5.0,
+    )
+    run_multitask_step(
+        with_logging,
+        examples,
+        catalogs,
+        batches,
+        build_optimizers(with_logging, OptimizerSettings(lr=1e-3)),
+        method=method,
+        seed=42,
+        global_step=0,
+        grad_clip_norm=5.0,
+        gradient_logger=GradientConflictLogger(
+            tmp_path / "gradient_conflicts.jsonl", tuple(str(i) for i in range(5))
+        ),
+    )
+
+    for name, expected in without_logging.state_dict().items():
+        torch.testing.assert_close(with_logging.state_dict()[name], expected, rtol=0, atol=0)
+
+
 def test_single_step_updates_model_with_sparse_and_dense_optimizers() -> None:
     from ftrec.training.engine import OptimizerSettings, build_optimizers
     from ftrec.training.pretrain import run_single_task_step
@@ -162,6 +273,9 @@ def test_joint_pretraining_run_writes_checkpoints_metrics_and_gradients(
     assert (output / "last.pt").is_file()
     assert (output / "result.json").is_file()
     assert (output / "gradient_conflicts.jsonl").is_file()
+    assert (output / "gradient_conflict_pairs.csv").is_file()
+    assert (output / "gradient_conflict_summary.json").is_file()
+    assert (output / "gradient_conflict_by_domain_layer.csv").is_file()
     assert (output / "evaluation_candidates.json").is_file()
     assert not (output / "validation_candidates.json").exists()
     assert not (output / "test_candidates.json").exists()

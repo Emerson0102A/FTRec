@@ -118,6 +118,9 @@ class SASRec(nn.Module):
             "position_embedding": ("position_embedding.weight",),
         }
         for index in range(len(self.blocks)):
+            # LoRA changes the projection weight matrices, not their biases.
+            query = f"blocks.{index}.attention.q_proj.weight"
+            value = f"blocks.{index}.attention.v_proj.weight"
             groups[f"block_{index}_attention"] = (
                 f"blocks.{index}.attention_norm",
                 f"blocks.{index}.attention",
@@ -126,5 +129,7 @@ class SASRec(nn.Module):
                 f"blocks.{index}.ffn_norm",
                 f"blocks.{index}.ffn",
             )
+            groups[f"block_{index}_q"] = (query,)
+            groups[f"block_{index}_v"] = (value,)
+            groups[f"block_{index}_qv"] = (query, value)
         return groups
-

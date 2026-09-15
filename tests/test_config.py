@@ -35,3 +35,27 @@ def test_canonical_hash_is_order_independent() -> None:
         {"a": {"x": 1}, "b": 2}
     )
 
+
+def test_production_configs_follow_gmflowrec_training_protocol() -> None:
+    """Catch a run silently reverting to the old data, batch, or learning rate."""
+    from ftrec.config import load_config
+
+    root = Path(__file__).parents[1]
+    for name in ("single", "joint", "pcgrad", "lora", "fullft"):
+        config = load_config(root / "configs" / "experiment" / f"{name}.yaml")
+        assert config["processed_dir"] == "data/processed/gmflowrec-amazon"
+        assert config["batch_size"] == 256
+        assert config["steps_per_epoch"] == "auto"
+        assert config["epochs"] == 100
+        assert config["lr"] == 0.001
+        assert config["evaluation_protocol"] == "sampled"
+        assert config["num_eval_negatives"] == 999
+
+    assert load_config(root / "configs" / "experiment" / "fullft.yaml")[
+        "embedding_lr"
+    ] == 0.001
+    for name in ("joint", "pcgrad"):
+        conflict = load_config(root / "configs" / "experiment" / f"{name}.yaml")[
+            "gradient_conflict"
+        ]
+        assert conflict == {"enabled": True, "ema_beta": 0.9, "log_interval": 100}

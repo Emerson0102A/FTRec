@@ -4,6 +4,14 @@ from pathlib import Path
 from dataclasses import replace
 
 import pytest
+
+
+def test_auto_adaptation_steps_cover_each_domain_once() -> None:
+    """Catch adaptation epochs retaining a fixed step count across domains."""
+    from ftrec.training.adapt import resolve_adapt_steps_per_epoch
+
+    assert resolve_adapt_steps_per_epoch(501, batch_size=256, requested=None) == 2
+    assert resolve_adapt_steps_per_epoch(501, batch_size=256, requested=9) == 9
 import torch
 
 from ftrec.data.datasets import SequenceRecord, SequenceStore

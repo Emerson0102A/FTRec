@@ -34,6 +34,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--method", choices=("single", "joint", "pcgrad"))
     parser.add_argument("--domain", type=int)
     parser.add_argument("--seed", type=int)
+    parser.add_argument("--epochs", type=int)
+    parser.add_argument("--steps-per-epoch", type=int)
     parser.add_argument("--device")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--no-progress", action="store_true")
@@ -43,6 +45,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _pick(argument: object | None, config: dict[str, object], key: str) -> object:
     return argument if argument is not None else config[key]
+
+
+def _steps_per_epoch(value: object) -> int | None:
+    if isinstance(value, str) and value.lower() == "auto":
+        return None
+    return int(value)
 
 
 def _data_hash(processed_dir: Path) -> str:
@@ -67,6 +75,9 @@ def _resolved_output(
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     config = load_config(args.config)
+    gradient_config = config.get("gradient_conflict", {})
+    if not isinstance(gradient_config, dict):
+        raise TypeError("gradient_conflict configuration must be a mapping")
     model_values = load_config(args.model_config)
     processed_dir = Path(_pick(args.processed_dir, config, "processed_dir"))
     method = str(_pick(args.method, config, "method"))
@@ -87,8 +98,10 @@ def main(argv: list[str] | None = None) -> int:
         seed=seed,
         domain=domain,
         batch_size=int(config["batch_size"]),
-        steps_per_epoch=int(config["steps_per_epoch"]),
-        epochs=int(config["epochs"]),
+        steps_per_epoch=_steps_per_epoch(
+            _pick(args.steps_per_epoch, config, "steps_per_epoch")
+        ),
+        epochs=int(_pick(args.epochs, config, "epochs")),
         patience=int(config["patience"]),
         lr=float(config["lr"]),
         embedding_lr=(
@@ -104,7 +117,11 @@ def main(argv: list[str] | None = None) -> int:
         evaluation_seed=int(config.get("evaluation_seed", 2026)),
         evaluation_chunk_size=int(config.get("evaluation_chunk_size", 4096)),
         evaluation_batch_size=int(config.get("evaluation_batch_size", 128)),
-        gradient_log_interval=int(config.get("gradient_log_interval", 10)),
+        gradient_log_interval=int(
+            gradient_config.get("log_interval", config.get("gradient_log_interval", 10))
+        ),
+        gradient_conflict_enabled=bool(gradient_config.get("enabled", True)),
+        gradient_conflict_ema_beta=float(gradient_config.get("ema_beta", 0.9)),
         bf16=bool(config.get("bf16", False)),
         data_hash=_data_hash(processed_dir),
         force=args.force,

@@ -12,6 +12,7 @@ import yaml
 
 CLI_MODULES = (
     "ftrec.cli.preprocess",
+    "ftrec.cli.import_gmflowrec",
     "ftrec.cli.pretrain",
     "ftrec.cli.adapt",
     "ftrec.cli.analyze",
@@ -76,6 +77,7 @@ def test_server_scripts_are_fail_fast_and_stage_scoped() -> None:
     root = Path(__file__).parents[1]
     names = (
         "run_preprocess.sh",
+        "run_import_gmflowrec.sh",
         "run_single.sh",
         "run_joint.sh",
         "run_pcgrad.sh",
@@ -265,3 +267,100 @@ def test_pilot_dry_run_plans_the_approved_single_seed_matrix(
     assert payload["ranks"] == [1, 2, 4]
     assert payload["model_runs"] == expected_runs
     assert [stage["stage"] for stage in payload["stages"]] == expected_stages
+    assert payload["epochs"] == 3
+    assert payload["steps_per_epoch"] == 100
+    assert all("--epochs" in stage["argv"] for stage in payload["stages"])
+    assert all("--steps-per-epoch" in stage["argv"] for stage in payload["stages"])
+
+
+def test_pilot_expands_independent_runs_for_controlled_parallelism() -> None:
+    """Catch a nominal worker option that still launches one serial matrix process."""
+    from ftrec.cli.pilot import build_pilot_stages, expand_pilot_jobs
+
+    stages = build_pilot_stages(
+        seed=42,
+        ranks=(1, 4),
+        with_fullft=False,
+        epochs=3,
+        steps_per_epoch=100,
+    )
+    phases = expand_pilot_jobs(stages, ranks=(1, 4))
+
+    assert [phase.name for phase in phases] == ["pretrain", "lora"]
+    assert [len(phase.jobs) for phase in phases] == [2, 20]
+    assert {job.stage for job in phases[0].jobs} == {"joint", "pcgrad"}
+    assert all("--pretrain-method" in job.argv for job in phases[1].jobs)
+    assert all("--domain" in job.argv for job in phases[1].jobs)
+    assert all("--rank" in job.argv for job in phases[1].jobs)
+    assert all("--ranks" not in job.argv for job in phases[1].jobs)
+
+
+def test_pilot_dry_run_reports_parallel_worker_limits() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ftrec.cli.pilot",
+            "--dry-run",
+            "--pretrain-workers",
+            "2",
+            "--adapt-workers",
+            "3",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["pretrain_workers"] == 2
+    assert payload["adapt_workers"] == 3
+    assert [phase["jobs"] for phase in payload["phases"]] == [2, 30]
+
+
+def test_parallel_pilot_interrupt_terminates_inflight_children(monkeypatch) -> None:
+    """Catch Ctrl+C leaving GPU jobs running or allowing the next phase to start."""
+    import threading
+
+    from ftrec.cli.pilot import PilotJob, PilotPhase, _run_phase
+
+    peer_started = threading.Event()
+    peer_terminated = threading.Event()
+    processes = []
+
+    class FakeProcess:
+        def __init__(self, _argv) -> None:
+            self.index = len(processes)
+            self.terminated = False
+            processes.append(self)
+
+        def wait(self, timeout=None) -> int:
+            if timeout is not None:
+                return -15
+            if self.index == 0:
+                assert peer_started.wait(1)
+                raise KeyboardInterrupt
+            peer_started.set()
+            assert peer_terminated.wait(1)
+            return -15
+
+        def terminate(self) -> None:
+            self.terminated = True
+            peer_terminated.set()
+
+        def kill(self) -> None:
+            self.terminated = True
+            peer_terminated.set()
+
+    monkeypatch.setattr("ftrec.cli.pilot.subprocess.Popen", FakeProcess)
+    phase = PilotPhase(
+        "pretrain",
+        (PilotJob("joint", ("joint",)), PilotJob("pcgrad", ("pcgrad",))),
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        _run_phase(phase, workers=2)
+
+    assert len(processes) == 2
+    assert processes[1].terminated

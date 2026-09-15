@@ -137,3 +137,44 @@ def test_sampled_evaluation_encodes_each_context_batch_once() -> None:
 
     assert result["num_eval_users"] == 4
     assert model.encode_calls == 1
+
+
+def test_sampled_evaluation_reads_persisted_candidates_by_matrix_batch() -> None:
+    """Catch converting every cached 1,000-item row through Python each epoch."""
+    import numpy as np
+
+    from ftrec.evaluation.ranking import evaluate_model
+
+    class BatchOnlyCandidates:
+        def batch(self, example_ids):
+            assert tuple(example_ids) == (0, 1)
+            return np.asarray([[2, 4, 5], [3, 4, 5]], dtype=np.int32)
+
+        def get(self, *_args, **_kwargs):
+            raise AssertionError("cached candidates must use the batched path")
+
+    model = SASRec(
+        SASRecConfig(
+            num_items=5,
+            hidden_size=8,
+            num_blocks=1,
+            num_heads=1,
+            dropout=0.0,
+            maxlen=2,
+        )
+    )
+    examples = (
+        TargetExample(0, 10, (0, 1), (-1, 0), 2, 0, frozenset({1, 2})),
+        TargetExample(1, 11, (0, 1), (-1, 0), 3, 0, frozenset({1, 3})),
+    )
+
+    result = evaluate_model(
+        model,
+        examples,
+        {0: (1, 2, 3, 4, 5)},
+        protocol="sampled",
+        sampled_candidates=BatchOnlyCandidates(),
+        batch_size=2,
+    )
+
+    assert result["num_eval_users"] == 2

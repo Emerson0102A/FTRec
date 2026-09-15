@@ -19,8 +19,8 @@ from ftrec.data.datasets import SequenceStore, TargetExample, build_mixed_exampl
 from ftrec.data.sampling import (
     BalancedBatchPlan,
     SameDomainNegativeSampler,
-    build_evaluation_candidates,
     evaluation_candidate_manifest,
+    resolve_evaluation_candidates,
 )
 from ftrec.evaluation.ranking import evaluate_model
 from ftrec.models.lora import (
@@ -46,7 +46,7 @@ class AdaptSettings:
     alpha: float | None = None
     seed: int = 42
     batch_size: int = 128
-    steps_per_epoch: int = 100
+    steps_per_epoch: int | None = 100
     epochs: int = 100
     patience: int = 10
     lr: float = 1e-4
@@ -78,9 +78,11 @@ class AdaptSettings:
                 raise ValueError("LoRA adaptation requires a positive alpha")
         elif self.rank is not None or self.alpha is not None:
             raise ValueError("rank and alpha are only valid for LoRA")
-        for name in ("batch_size", "steps_per_epoch", "epochs", "patience"):
+        for name in ("batch_size", "epochs", "patience"):
             if getattr(self, name) < 1:
                 raise ValueError(f"{name} must be positive")
+        if self.steps_per_epoch is not None and self.steps_per_epoch < 1:
+            raise ValueError("steps_per_epoch must be positive or automatic")
         if self.evaluation_protocol not in {"full", "sampled"}:
             raise ValueError("evaluation_protocol must be 'full' or 'sampled'")
 
@@ -99,6 +101,17 @@ class AdaptRunResult:
     test_metrics: dict[str, float | int | str]
 
 
+def resolve_adapt_steps_per_epoch(
+    example_count: int, *, batch_size: int, requested: int | None
+) -> int:
+    """Cover each target-domain adaptation example once per automatic epoch."""
+    if requested is not None:
+        return requested
+    if example_count < 1:
+        raise ValueError("cannot resolve steps without training examples")
+    return max(1, math.ceil(example_count / batch_size))
+
+
 def adapt_config_hash(model_config: SASRecConfig, settings: AdaptSettings) -> str:
     training = asdict(settings)
     training.pop("output_dir")
@@ -112,13 +125,16 @@ def _candidate_map(
     store: SequenceStore,
     settings: AdaptSettings,
     *,
+    split: str,
     seed_offset: int,
-) -> dict[int, tuple[int, ...]] | None:
+) -> object | None:
     if settings.evaluation_protocol == "full":
         return None
-    return build_evaluation_candidates(
+    return resolve_evaluation_candidates(
+        store,
         examples,
-        store.items_by_domain,
+        split=split,
+        domain=settings.domain,
         count=settings.num_eval_negatives,
         evaluation_seed=settings.evaluation_seed,
         split_offset=seed_offset,
@@ -132,7 +148,7 @@ def _evaluate(
     settings: AdaptSettings,
     *,
     seed_offset: int,
-    sampled_candidates: dict[int, tuple[int, ...]] | None = None,
+    sampled_candidates: object | None = None,
 ) -> dict[str, float | int | str]:
     return evaluate_model(
         model,
@@ -182,7 +198,7 @@ def train_adaptation(
         )
     )
     test_candidates = _candidate_map(
-        test_examples, store, settings, seed_offset=20_000
+        test_examples, store, settings, split="test", seed_offset=20_000
     )
     pretrain_metrics = _evaluate(
         model,
@@ -232,8 +248,13 @@ def train_adaptation(
     )
     if not train_examples:
         raise ValueError(f"domain {settings.domain} has no adaptation examples")
+    steps_per_epoch = resolve_adapt_steps_per_epoch(
+        len(train_examples),
+        batch_size=settings.batch_size,
+        requested=settings.steps_per_epoch,
+    )
     validation_candidates = _candidate_map(
-        validation_examples, store, settings, seed_offset=10_000
+        validation_examples, store, settings, split="valid", seed_offset=10_000
     )
     optimizers = build_optimizers(
         model,
@@ -277,7 +298,7 @@ def train_adaptation(
         manifest = BalancedBatchPlan.create(
             {settings.domain: train_examples},
             batch_size=settings.batch_size,
-            total_steps=settings.epochs * settings.steps_per_epoch,
+            total_steps=settings.epochs * steps_per_epoch,
             seed=settings.seed,
         )
         manifest.write(run.path / "batch_manifest.json")
@@ -317,7 +338,7 @@ def train_adaptation(
         last_epoch = 0
         training_started = time.perf_counter()
         training_progress = tqdm(
-            total=settings.epochs * settings.steps_per_epoch,
+            total=settings.epochs * steps_per_epoch,
             desc=(
                 f"train {settings.method} domain-{settings.domain} "
                 f"seed-{settings.seed}"
@@ -331,7 +352,7 @@ def train_adaptation(
             last_epoch = epoch
             losses: list[float] = []
             norms: list[float] = []
-            for _ in range(settings.steps_per_epoch):
+            for _ in range(steps_per_epoch):
                 identifiers = next(batch_steps)[settings.domain]
                 batch = tuple(lookup[identifier] for identifier in identifiers)
                 step = run_single_task_step(

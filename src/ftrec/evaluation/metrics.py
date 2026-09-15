@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Sequence
 
 
 def metrics_for_rank(rank: int, k: int) -> tuple[float, float]:
@@ -42,3 +43,36 @@ class RankingMetrics:
             "num_skipped_users": self.num_skipped_users,
         }
 
+
+class RankingMetricsAtKs:
+    """Accumulate one set of ranks for every requested paper cutoff."""
+
+    def __init__(self, ks: Sequence[int] = (5, 10)) -> None:
+        normalized = tuple(sorted(set(int(k) for k in ks)))
+        if not normalized or normalized[0] < 1:
+            raise ValueError("metric cutoffs must be positive")
+        self.accumulators = {k: RankingMetrics(k=k) for k in normalized}
+
+    def add_rank(self, rank: int) -> None:
+        for metrics in self.accumulators.values():
+            metrics.add_rank(rank)
+
+    def skip(self) -> None:
+        for metrics in self.accumulators.values():
+            metrics.skip()
+
+    def compute(self) -> dict[str, float | int]:
+        result: dict[str, float | int] = {}
+        for metrics in self.accumulators.values():
+            current = metrics.compute()
+            result.update(
+                {
+                    key: value
+                    for key, value in current.items()
+                    if key not in {"num_eval_users", "num_skipped_users"}
+                }
+            )
+        reference = next(iter(self.accumulators.values()))
+        result["num_eval_users"] = reference.num_eval_users
+        result["num_skipped_users"] = reference.num_skipped_users
+        return result

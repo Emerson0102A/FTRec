@@ -1,6 +1,7 @@
 Dataset
 .worktrees/
 /data/processed/
+/data/MDSR-Amazon/
 /runs/
 /results/
 *.sqlite

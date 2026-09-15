@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from .datasets import TargetExample
+from .datasets import CandidateMatrix, SequenceStore, TargetExample
 
 
 class NegativeSamplingError(RuntimeError):
@@ -110,6 +110,34 @@ def build_evaluation_candidates(
             )
         candidates[example.example_id] = (example.positive_item, *negatives)
     return candidates
+
+
+def resolve_evaluation_candidates(
+    store: SequenceStore,
+    examples: Sequence[TargetExample],
+    *,
+    split: str,
+    domain: int,
+    count: int,
+    evaluation_seed: int,
+    split_offset: int,
+) -> CandidateMatrix | dict[int, tuple[int, ...]]:
+    """Reuse an imported fixed matrix, falling back for synthetic/legacy data."""
+    cached = store.evaluation_candidates(
+        split=split,
+        domain=domain,
+        negative_count=count,
+        evaluation_seed=evaluation_seed,
+    )
+    if cached is not None:
+        return cached.select(examples)
+    return build_evaluation_candidates(
+        examples,
+        store.items_by_domain,
+        count=count,
+        evaluation_seed=evaluation_seed,
+        split_offset=split_offset,
+    )
 
 
 def evaluation_candidate_manifest(

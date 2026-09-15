@@ -21,6 +21,7 @@ test = ["pytest>=8"]
 
 [project.scripts]
 ftrec-preprocess = "ftrec.cli.preprocess:main"
+ftrec-import-gmflowrec = "ftrec.cli.import_gmflowrec:main"
 ftrec-pretrain = "ftrec.cli.pretrain:main"
 ftrec-adapt = "ftrec.cli.adapt:main"
 ftrec-analyze = "ftrec.cli.analyze:main"

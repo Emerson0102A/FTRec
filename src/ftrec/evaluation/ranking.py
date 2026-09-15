@@ -9,7 +9,7 @@ from tqdm.auto import tqdm
 
 from ftrec.data.datasets import TargetExample
 
-from .metrics import RankingMetrics
+from .metrics import RankingMetrics, RankingMetricsAtKs
 
 
 def rank_ground_truth_chunked(
@@ -56,7 +56,7 @@ def evaluate_model(
     sampled_candidates: Mapping[int, Sequence[int]] | None = None,
     chunk_size: int = 4096,
     batch_size: int = 128,
-    k: int = 10,
+    k: int | None = None,
     device: str | torch.device = "cpu",
     progress: bool = False,
     description: str = "evaluate",
@@ -67,7 +67,7 @@ def evaluate_model(
         raise ValueError("sampled evaluation requires persisted candidates")
     if batch_size < 1:
         raise ValueError("batch_size must be positive")
-    metrics = RankingMetrics(k=k)
+    metrics = RankingMetricsAtKs((k,)) if k is not None else RankingMetricsAtKs((5, 10))
     was_training = bool(getattr(model, "training", False))
     if hasattr(model, "eval"):
         model.eval()
@@ -141,7 +141,7 @@ def _evaluate_sampled_batched(
     model: object,
     examples: Sequence[TargetExample],
     sampled_candidates: Mapping[int, Sequence[int]],
-    metrics: RankingMetrics,
+    metrics: RankingMetrics | RankingMetricsAtKs,
     *,
     batch_size: int,
     device: torch.device,
@@ -151,6 +151,44 @@ def _evaluate_sampled_batched(
     with torch.no_grad():
         for offset in range(0, len(examples), batch_size):
             source_batch = examples[offset : offset + batch_size]
+            if hasattr(sampled_candidates, "batch"):
+                matrix = sampled_candidates.batch(
+                    tuple(example.example_id for example in source_batch)
+                )
+                candidate_ids = torch.as_tensor(
+                    matrix, dtype=torch.long, device=device
+                )
+                target_ids = torch.tensor(
+                    [example.positive_item for example in source_batch],
+                    dtype=torch.long,
+                    device=device,
+                )
+                if candidate_ids.ndim != 2 or candidate_ids.shape[0] != len(source_batch):
+                    raise ValueError("cached candidate batch has an incompatible shape")
+                if not torch.all((candidate_ids == target_ids.unsqueeze(1)).any(dim=1)):
+                    raise ValueError("cached candidate row is missing its positive item")
+                contexts = torch.tensor(
+                    [example.context_items for example in source_batch],
+                    dtype=torch.long,
+                    device=device,
+                )
+                states = model.final_state(contexts)
+                scores = torch.einsum(
+                    "bd,bcd->bc", states, model.item_embedding(candidate_ids)
+                )
+                target_scores = torch.einsum(
+                    "bd,bd->b", states, model.item_embedding(target_ids)
+                )
+                ahead = scores > target_scores.unsqueeze(1)
+                tied_ahead = (scores == target_scores.unsqueeze(1)) & (
+                    candidate_ids < target_ids.unsqueeze(1)
+                )
+                not_target = candidate_ids != target_ids.unsqueeze(1)
+                ranks = ((ahead | tied_ahead) & not_target).sum(dim=1)
+                for rank in ranks.cpu().tolist():
+                    metrics.add_rank(int(rank))
+                progress_bar.update(len(source_batch))
+                continue
             batch: list[TargetExample] = []
             rows: list[tuple[int, ...]] = []
             for example in source_batch:
@@ -216,7 +254,7 @@ def _evaluate_full_batched(
     model: object,
     examples: Sequence[TargetExample],
     items_by_domain: Mapping[int, Sequence[int]],
-    metrics: RankingMetrics,
+    metrics: RankingMetrics | RankingMetricsAtKs,
     *,
     chunk_size: int,
     batch_size: int,

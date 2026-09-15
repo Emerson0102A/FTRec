@@ -32,6 +32,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rank", type=int)
     parser.add_argument("--ranks", type=int, nargs="+")
     parser.add_argument("--seed", type=int)
+    parser.add_argument("--epochs", type=int)
+    parser.add_argument("--steps-per-epoch", type=int)
     parser.add_argument("--device")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--no-progress", action="store_true")
@@ -45,6 +47,12 @@ def _list_or_selected(value: object, selected: object | None) -> tuple[object, .
     if isinstance(value, list):
         return tuple(value)
     return (value,)
+
+
+def _steps_per_epoch(value: object) -> int | None:
+    if isinstance(value, str) and value.lower() == "auto":
+        return None
+    return int(value)
 
 
 def _data_hash(processed_dir: Path) -> str:
@@ -166,8 +174,12 @@ def main(argv: list[str] | None = None) -> int:
                         alpha=alpha,
                         seed=seed,
                         batch_size=int(config["batch_size"]),
-                        steps_per_epoch=int(config["steps_per_epoch"]),
-                        epochs=int(config["epochs"]),
+                        steps_per_epoch=_steps_per_epoch(
+                            args.steps_per_epoch
+                            if args.steps_per_epoch is not None
+                            else config["steps_per_epoch"]
+                        ),
+                        epochs=(args.epochs if args.epochs is not None else int(config["epochs"])),
                         patience=int(config["patience"]),
                         lr=float(config["lr"]),
                         embedding_lr=(
