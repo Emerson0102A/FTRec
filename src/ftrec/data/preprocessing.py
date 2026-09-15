@@ -8,6 +8,8 @@ import hashlib
 import io
 import json
 import sqlite3
+import sys
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterator
@@ -21,6 +23,14 @@ from .amazon import AMAZON5_DOMAINS, DOMAIN_BY_ID, DomainSpec
 
 
 REQUIRED_COLUMNS = frozenset({"user_id", "parent_asin", "rating", "timestamp"})
+
+
+def _progress(event: str, **values: object) -> None:
+    print(
+        json.dumps({"event": event, **values}, sort_keys=True, separators=(",", ":")),
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 class InputSchemaError(ValueError):
@@ -116,6 +126,8 @@ def open_database(path: str | Path) -> sqlite3.Connection:
     connection = sqlite3.connect(database_path)
     connection.execute("PRAGMA journal_mode=WAL")
     connection.execute("PRAGMA synchronous=NORMAL")
+    connection.execute("PRAGMA cache_size=-262144")
+    connection.execute("PRAGMA mmap_size=268435456")
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS interactions (
@@ -166,8 +178,13 @@ def ingest_amazon5(
            OR (excluded.timestamp = interactions.timestamp
                AND excluded.source_ordinal < interactions.source_ordinal)
     """
+    started = time.perf_counter()
+    input_sizes = {domain.name: _input_path(settings, domain).stat().st_size for domain in domains}
+    total_input_bytes = sum(input_sizes.values())
+    completed_bytes = 0
     for domain in domains:
         path = _input_path(settings, domain)
+        _progress("preprocess_ingest_domain_start", domain=domain.name, path=str(path))
         batch: list[tuple[str, int, str, int, int]] = []
         with gzip.open(path, "rt", encoding="utf-8", newline="") as stream:
             reader = csv.DictReader(stream)
@@ -205,9 +222,43 @@ def ingest_amazon5(
                     connection.executemany(upsert, batch)
                     connection.commit()
                     batch.clear()
+                    if counters[domain.name]["raw_rows"] % 1_000_000 < settings.batch_size:
+                        elapsed = time.perf_counter() - started
+                        try:
+                            current_bytes = int(stream.buffer.fileobj.tell())
+                        except (AttributeError, OSError):
+                            current_bytes = 0
+                        fraction = (
+                            min(completed_bytes + current_bytes, total_input_bytes)
+                            / total_input_bytes
+                            if total_input_bytes
+                            else 0.0
+                        )
+                        eta = elapsed * (1.0 - fraction) / fraction if fraction else None
+                        _progress(
+                            "preprocess_ingest_progress",
+                            domain=domain.name,
+                            elapsed_seconds=round(elapsed, 1),
+                            eta_seconds=round(eta, 1) if eta is not None else None,
+                            raw_rows=raw_rows,
+                            rows_per_second=round(raw_rows / elapsed, 1),
+                        )
         if batch:
             connection.executemany(upsert, batch)
             connection.commit()
+        completed_bytes += input_sizes[domain.name]
+        elapsed = time.perf_counter() - started
+        fraction = completed_bytes / total_input_bytes if total_input_bytes else 1.0
+        eta = elapsed * (1.0 - fraction) / fraction if fraction else 0.0
+        _progress(
+            "preprocess_ingest_domain_complete",
+            domain=domain.name,
+            elapsed_seconds=round(elapsed, 1),
+            eta_seconds=round(eta, 1),
+            raw_rows=raw_rows,
+            rows_per_second=round(raw_rows / elapsed, 1),
+        )
+    _progress("preprocess_build_indexes_start", elapsed_seconds=round(time.perf_counter() - started, 1))
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_interactions_user ON interactions(user_raw)"
     )
@@ -234,6 +285,7 @@ def run_joint_k_core(
     if user_min < 1 or item_min < 1:
         raise ValueError("k-core thresholds must be positive")
     initial = connection.execute("SELECT COUNT(*) FROM interactions").fetchone()[0]
+    started = time.perf_counter()
     iterations: list[KCoreIteration] = []
     index = 1
     while True:
@@ -249,6 +301,12 @@ def run_joint_k_core(
             "SELECT domain_id, item_raw FROM interactions "
             "GROUP BY domain_id, item_raw HAVING COUNT(*) < ?",
             (item_min,),
+        )
+        connection.execute(
+            "CREATE INDEX temp.idx_low_users ON low_users(user_raw)"
+        )
+        connection.execute(
+            "CREATE INDEX temp.idx_low_items ON low_items(domain_id, item_raw)"
         )
         low_users = connection.execute("SELECT COUNT(*) FROM low_users").fetchone()[0]
         low_items = connection.execute("SELECT COUNT(*) FROM low_items").fetchone()[0]
@@ -276,6 +334,14 @@ def run_joint_k_core(
             )
             connection.commit()
         iterations.append(KCoreIteration(index, low_users, low_items, deleted))
+        _progress(
+            "preprocess_kcore_iteration",
+            deleted_edges=deleted,
+            elapsed_seconds=round(time.perf_counter() - started, 1),
+            iteration=index,
+            low_items=low_items,
+            low_users=low_users,
+        )
         if deleted == 0:
             break
         index += 1
@@ -426,7 +492,7 @@ INTERACTION_SCHEMA = pa.schema(
 
 
 def _write_interactions_and_sequences(
-    connection: sqlite3.Connection, output_dir: Path
+    connection: sqlite3.Connection, output_dir: Path, *, row_group_size: int
 ) -> tuple[int, int]:
     parquet_path = output_dir / "interactions.parquet"
     raw, compressed, sequence_stream = _gzip_text_writer(
@@ -440,12 +506,19 @@ def _write_interactions_and_sequences(
         version="2.6",
     )
     users = interactions = 0
+    buffered: list[dict[str, object]] = []
     try:
         for group in _iter_user_groups(connection):
             serializable = [
                 {key: row[key] for key in INTERACTION_SCHEMA.names} for row in group
             ]
-            writer.write_table(pa.Table.from_pylist(serializable, schema=INTERACTION_SCHEMA))
+            buffered.extend(serializable)
+            if len(buffered) >= row_group_size:
+                writer.write_table(
+                    pa.Table.from_pylist(buffered, schema=INTERACTION_SCHEMA),
+                    row_group_size=row_group_size,
+                )
+                buffered.clear()
             sequence = {
                 "domain_ids": [row["domain_id"] for row in group],
                 "item_ids": [row["item_id"] for row in group],
@@ -464,6 +537,11 @@ def _write_interactions_and_sequences(
             )
             users += 1
             interactions += len(group)
+        if buffered:
+            writer.write_table(
+                pa.Table.from_pylist(buffered, schema=INTERACTION_SCHEMA),
+                row_group_size=row_group_size,
+            )
     finally:
         writer.close()
         sequence_stream.close()
@@ -569,9 +647,13 @@ def export_processed_dataset(
 ) -> ExportResult:
     target = Path(output_dir)
     target.mkdir(parents=True, exist_ok=True)
+    started = time.perf_counter()
+    _progress("preprocess_export_start", output_dir=str(target))
     _create_stable_mappings(connection)
     _write_mapping_files(connection, target)
-    users, interactions = _write_interactions_and_sequences(connection, target)
+    users, interactions = _write_interactions_and_sequences(
+        connection, target, row_group_size=settings.batch_size
+    )
     _write_statistics(connection, target)
     items = connection.execute("SELECT COUNT(*) FROM item_map").fetchone()[0]
     sequence_stats = connection.execute(
@@ -633,6 +715,13 @@ def export_processed_dataset(
         "sha256": hashes,
     }
     _write_json(target / "manifest.json", manifest)
+    _progress(
+        "preprocess_export_complete",
+        elapsed_seconds=round(time.perf_counter() - started, 1),
+        interactions=interactions,
+        items=items,
+        users=users,
+    )
     return ExportResult(target, hashes, users, items, interactions)
 
 

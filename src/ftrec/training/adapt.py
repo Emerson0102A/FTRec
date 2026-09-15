@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import math
 import random
+import sys
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -13,7 +15,7 @@ import torch
 from ftrec.artifacts import RunDirectory, sha256_file
 from ftrec.config import canonical_hash, canonical_json
 from ftrec.data.datasets import SequenceStore, TargetExample, build_mixed_examples
-from ftrec.data.sampling import BalancedBatchManifest
+from ftrec.data.sampling import BalancedBatchPlan, SameDomainNegativeSampler
 from ftrec.evaluation.ranking import evaluate_model
 from ftrec.models.lora import (
     inject_qv_lora,
@@ -49,6 +51,7 @@ class AdaptSettings:
     evaluation_protocol: str = "full"
     num_eval_negatives: int = 100
     evaluation_chunk_size: int = 4096
+    evaluation_batch_size: int = 128
     bf16: bool = False
     data_hash: str = "unknown"
     force: bool = False
@@ -105,18 +108,17 @@ def _candidate_map(
     if settings.evaluation_protocol == "full":
         return None
     result: dict[int, tuple[int, ...]] = {}
+    sampler = SameDomainNegativeSampler(store.items_by_domain, settings.seed)
     for example in examples:
-        negatives = [
-            item
-            for item in store.items_by_domain.get(settings.domain, ())
-            if item not in example.seen_items
-        ]
-        random.Random(
+        generator = random.Random(
             settings.seed * 1_000_003 + seed_offset + example.example_id
-        ).shuffle(negatives)
+        )
+        negatives = sampler.sample_many(
+            example, settings.num_eval_negatives, rng=generator
+        )
         result[example.example_id] = (
             example.positive_item,
-            *negatives[: settings.num_eval_negatives],
+            *negatives,
         )
     return result
 
@@ -141,6 +143,7 @@ def _evaluate(
             else None
         ),
         chunk_size=settings.evaluation_chunk_size,
+        batch_size=settings.evaluation_batch_size,
         device=settings.device,
     )
 
@@ -267,18 +270,25 @@ def train_adaptation(
             ),
         )
         run.write_json("environment.json", runtime_metadata(device))
-        manifest = BalancedBatchManifest.create(
+        manifest = BalancedBatchPlan.create(
             {settings.domain: train_examples},
             batch_size=settings.batch_size,
-            steps=settings.epochs * settings.steps_per_epoch,
+            total_steps=settings.epochs * settings.steps_per_epoch,
             seed=settings.seed,
         )
         manifest.write(run.path / "batch_manifest.json")
+        batch_steps = iter(manifest.iter_steps())
         if validation_candidates is not None and test_candidates is not None:
             run.write_json("validation_candidates.json", validation_candidates)
             run.write_json("test_candidates.json", test_candidates)
         metrics_path = run.path / "metrics.jsonl"
         global_step = 0
+        lookup = {example.example_id: example for example in train_examples}
+        samplers = {
+            settings.domain: SameDomainNegativeSampler(
+                {settings.domain: store.items_by_domain[settings.domain]}, settings.seed
+            )
+        }
 
         def save_selected(path: Path, epoch: int) -> None:
             state = {"epoch": epoch, "global_step": global_step}
@@ -296,13 +306,13 @@ def train_adaptation(
                 )
 
         last_epoch = 0
+        training_started = time.perf_counter()
         for epoch in range(1, settings.epochs + 1):
             last_epoch = epoch
             losses: list[float] = []
             norms: list[float] = []
-            lookup = {example.example_id: example for example in train_examples}
             for _ in range(settings.steps_per_epoch):
-                identifiers = manifest.steps[global_step][settings.domain]
+                identifiers = next(batch_steps)[settings.domain]
                 batch = tuple(lookup[identifier] for identifier in identifiers)
                 step = run_single_task_step(
                     model,
@@ -313,6 +323,8 @@ def train_adaptation(
                     global_step=global_step,
                     grad_clip_norm=settings.grad_clip_norm,
                     bf16=settings.bf16,
+                    samplers=samplers,
+                    initialization_hash=base_hash,
                 )
                 losses.append(step.loss)
                 norms.append(step.gradient_norm)
@@ -326,8 +338,12 @@ def train_adaptation(
                 sampled_candidates=validation_candidates,
             )
             selected_metric = _metric_value(final_validation)
+            elapsed_seconds = time.perf_counter() - training_started
+            eta_seconds = elapsed_seconds / epoch * (settings.epochs - epoch)
             record = {
+                "elapsed_seconds": elapsed_seconds,
                 "epoch": epoch,
+                "eta_seconds": eta_seconds,
                 "gradient_norm": sum(norms) / len(norms),
                 "loss": sum(losses) / len(losses),
                 "validation": final_validation,
@@ -343,6 +359,23 @@ def train_adaptation(
                     )
                     + "\n"
                 )
+            print(
+                json.dumps(
+                    {
+                        "domain": settings.domain,
+                        "elapsed_seconds": round(elapsed_seconds, 1),
+                        "epoch": epoch,
+                        "eta_seconds": round(eta_seconds, 1),
+                        "event": "adapt_epoch_complete",
+                        "method": settings.method,
+                        "validation_ndcg": selected_metric,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
             if stopping.update(epoch, selected_metric):
                 save_selected(run.path / "best.pt", epoch)
             save_selected(run.path / "last.pt", epoch)

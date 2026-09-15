@@ -81,11 +81,16 @@ def clip_global_grad_norm(
     parameters: Iterable[torch.nn.Parameter], max_norm: float, epsilon: float = 1e-12
 ) -> float:
     parameters = tuple(parameter for parameter in parameters if parameter.grad is not None)
-    squared = 0.0
+    squared_values: list[torch.Tensor] = []
     for parameter in parameters:
         gradient = parameter.grad
         values = gradient.coalesce().values() if gradient.is_sparse else gradient
-        squared += float(torch.sum(values.float().square()).item())
+        squared_values.append(torch.sum(values.float().square()))
+    squared = (
+        float(torch.stack(squared_values).sum().detach().cpu().item())
+        if squared_values
+        else 0.0
+    )
     norm = math.sqrt(squared)
     if max_norm > 0 and norm > max_norm:
         factor = max_norm / (norm + epsilon)
@@ -166,4 +171,3 @@ def train_epochs(
     history.best_epoch = stopping.best_epoch
     history.best_metric = stopping.best_metric
     return history
-

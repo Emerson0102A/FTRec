@@ -17,4 +17,5 @@ weight_decay: 0.0
 grad_clip_norm: 5.0
 evaluation_protocol: full
 evaluation_chunk_size: 4096
+evaluation_batch_size: 128
 num_eval_negatives: 100

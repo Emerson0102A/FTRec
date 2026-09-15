@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import random
 from dataclasses import dataclass
@@ -23,17 +24,136 @@ class SameDomainNegativeSampler:
         }
         self.random = random.Random(seed)
 
-    def sample(self, example: TargetExample) -> int:
-        candidates = tuple(
-            item
-            for item in self.items_by_domain.get(example.target_domain, ())
-            if item not in example.seen_items
-        )
-        if not candidates:
+    def sample(
+        self, example: TargetExample, *, rng: random.Random | None = None
+    ) -> int:
+        catalog = self.items_by_domain.get(example.target_domain, ())
+        generator = rng or self.random
+        if not catalog:
             raise NegativeSamplingError(
                 f"no unseen item in domain {example.target_domain} for user {example.user_id}"
             )
-        return self.random.choice(candidates)
+        # Rejection sampling is O(1) for the normal sparse-user case. The
+        # bounded exhaustive fallback guarantees termination for dense users.
+        for _ in range(64):
+            candidate = catalog[generator.randrange(len(catalog))]
+            if candidate not in example.seen_items:
+                return candidate
+        start = generator.randrange(len(catalog))
+        for offset in range(len(catalog)):
+            candidate = catalog[(start + offset) % len(catalog)]
+            if candidate not in example.seen_items:
+                return candidate
+        raise NegativeSamplingError(
+            f"no unseen item in domain {example.target_domain} for user {example.user_id}"
+        )
+
+    def sample_many(
+        self,
+        example: TargetExample,
+        count: int,
+        *,
+        rng: random.Random | None = None,
+    ) -> tuple[int, ...]:
+        generator = rng or self.random
+        catalog = self.items_by_domain.get(example.target_domain, ())
+        selected: list[int] = []
+        selected_set: set[int] = set()
+        attempts = max(64, count * 8)
+        for _ in range(attempts):
+            if len(selected) >= count or not catalog:
+                break
+            candidate = catalog[generator.randrange(len(catalog))]
+            if candidate not in example.seen_items and candidate not in selected_set:
+                selected.append(candidate)
+                selected_set.add(candidate)
+        if len(selected) < count and catalog:
+            start = generator.randrange(len(catalog))
+            for offset in range(len(catalog)):
+                candidate = catalog[(start + offset) % len(catalog)]
+                if candidate not in example.seen_items and candidate not in selected_set:
+                    selected.append(candidate)
+                    selected_set.add(candidate)
+                    if len(selected) >= count:
+                        break
+        return tuple(selected)
+
+
+@dataclass(frozen=True)
+class BalancedBatchPlan:
+    """Compact deterministic batch recipe; identifiers are generated lazily."""
+
+    seed: int
+    batch_size: int
+    total_steps: int
+    example_ids_by_domain: dict[int, tuple[int, ...]]
+
+    @classmethod
+    def create(
+        cls,
+        examples_by_domain: Mapping[int, Sequence[TargetExample]],
+        *,
+        batch_size: int,
+        total_steps: int,
+        seed: int,
+    ) -> "BalancedBatchPlan":
+        if batch_size < 1 or total_steps < 1:
+            raise ValueError("batch_size and total_steps must be positive")
+        identifiers = {
+            int(domain): tuple(example.example_id for example in examples)
+            for domain, examples in sorted(examples_by_domain.items())
+        }
+        empty = [domain for domain, values in identifiers.items() if not values]
+        if empty:
+            raise ValueError(f"domains have no training examples: {empty}")
+        return cls(seed, batch_size, total_steps, identifiers)
+
+    def iter_steps(self, *, limit: int | None = None):
+        count = self.total_steps if limit is None else min(limit, self.total_steps)
+        states: dict[int, tuple[list[int], int, random.Random]] = {}
+        for domain, values in sorted(self.example_ids_by_domain.items()):
+            ids = list(values)
+            generator = random.Random(self.seed * 1009 + domain)
+            generator.shuffle(ids)
+            states[domain] = (ids, 0, generator)
+        for _ in range(count):
+            step: dict[int, tuple[int, ...]] = {}
+            for domain in sorted(states):
+                ids, cursor, generator = states[domain]
+                selected: list[int] = []
+                while len(selected) < self.batch_size:
+                    if cursor >= len(ids):
+                        generator.shuffle(ids)
+                        cursor = 0
+                    selected.append(ids[cursor])
+                    cursor += 1
+                states[domain] = (ids, cursor, generator)
+                step[domain] = tuple(selected)
+            yield step
+
+    def to_dict(self) -> dict[str, object]:
+        domains = {}
+        for domain, ids in sorted(self.example_ids_by_domain.items()):
+            digest = hashlib.sha256()
+            for start in range(0, len(ids), 10_000):
+                block = ",".join(str(value) for value in ids[start : start + 10_000])
+                digest.update(block.encode("ascii"))
+                digest.update(b",")
+            domains[str(domain)] = {"count": len(ids), "sha256": digest.hexdigest()}
+        return {
+            "algorithm": "shuffle-cycle-v1",
+            "batch_size": self.batch_size,
+            "domains": domains,
+            "seed": self.seed,
+            "total_steps": self.total_steps,
+            "version": 2,
+        }
+
+    def write(self, path: str | Path) -> None:
+        payload = json.dumps(
+            self.to_dict(), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        Path(path).write_text(payload + "\n", encoding="utf-8", newline="\n")
 
 
 @dataclass(frozen=True)
@@ -107,4 +227,3 @@ class BalancedBatchManifest:
                 for step in value["steps"]
             ),
         )
-

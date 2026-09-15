@@ -52,15 +52,26 @@ def gradient_dot(
     *,
     prefixes: tuple[str, ...] | None = None,
 ) -> float:
+    value = _gradient_dot_tensor(left, right, prefixes=prefixes)
+    return float(value.detach().cpu().item()) if value is not None else 0.0
+
+
+def _gradient_dot_tensor(
+    left: TaskGradients,
+    right: TaskGradients,
+    *,
+    prefixes: tuple[str, ...] | None = None,
+) -> torch.Tensor | None:
     if left.names != right.names:
         raise ValueError("task gradients must use identical parameter ordering")
-    total = 0.0
+    total: torch.Tensor | None = None
     for name, left_value, right_value in zip(
         left.names, left.values, right.values, strict=True
     ):
         if not _selected(name, prefixes) or left_value is None or right_value is None:
             continue
-        total += float(_tensor_dot(left_value, right_value).item())
+        value = _tensor_dot(left_value, right_value)
+        total = value if total is None else total + value
     return total
 
 
@@ -149,8 +160,13 @@ def project_pcgrad_with_counts(
         random.Random(seed * 1_000_003 + step * 101 + task_index).shuffle(peers)
         for peer_index in peers:
             peer = originals[peer_index]
-            dot = gradient_dot(current, peer)
-            denominator = gradient_dot(peer, peer)
+            dot_tensor = _gradient_dot_tensor(current, peer)
+            denominator_tensor = _gradient_dot_tensor(peer, peer)
+            if dot_tensor is None or denominator_tensor is None:
+                continue
+            dot, denominator = torch.stack(
+                (dot_tensor, denominator_tensor)
+            ).detach().cpu().tolist()
             if dot < 0.0 and denominator > 0.0:
                 current = _combine(current, peer, -dot / denominator)
                 count += 1
@@ -190,18 +206,34 @@ def cosine_matrix(
     *,
     prefixes: tuple[str, ...] | None = None,
 ) -> tuple[tuple[float, ...], ...]:
-    norms = [gradient_norm(task, prefixes=prefixes) for task in tasks]
-    rows: list[tuple[float, ...]] = []
+    if not tasks:
+        return ()
+    diagonal = [_gradient_dot_tensor(task, task, prefixes=prefixes) for task in tasks]
+    template = next((value for value in diagonal if value is not None), None)
+    if template is None:
+        return tuple(tuple(float("nan") for _ in tasks) for _ in tasks)
+    zero = template.new_zeros(())
+    norms = [torch.sqrt(torch.clamp(value if value is not None else zero, min=0)) for value in diagonal]
+    values: list[torch.Tensor] = []
     for left_index, left in enumerate(tasks):
-        row: list[float] = []
         for right_index, right in enumerate(tasks):
+            dot = _gradient_dot_tensor(left, right, prefixes=prefixes)
             denominator = norms[left_index] * norms[right_index]
-            if denominator == 0.0:
-                row.append(float("nan"))
-            else:
-                row.append(gradient_dot(left, right, prefixes=prefixes) / denominator)
-        rows.append(tuple(row))
-    return tuple(rows)
+            if dot is None:
+                dot = zero
+            values.append(
+                torch.where(
+                    denominator > 0,
+                    dot / denominator,
+                    torch.full_like(denominator, float("nan")),
+                )
+            )
+    host = torch.stack(values).detach().cpu().tolist()
+    width = len(tasks)
+    return tuple(
+        tuple(float(value) for value in host[start : start + width])
+        for start in range(0, len(host), width)
+    )
 
 
 def negative_pair_ratio(matrix: Sequence[Sequence[float]]) -> float:

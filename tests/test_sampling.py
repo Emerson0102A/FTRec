@@ -54,3 +54,36 @@ def test_balanced_batch_manifest_is_deterministic_and_equal_sized(tmp_path: Path
 
     assert first_path.read_bytes() == second_path.read_bytes()
     assert all(len(step[domain]) == 2 for step in first.steps for domain in range(5))
+
+
+def test_compact_batch_plan_is_bounded_and_replays_deterministically(tmp_path: Path) -> None:
+    from ftrec.data.sampling import BalancedBatchPlan
+
+    by_domain = {
+        domain: tuple(_example(domain * 10 + index, domain, frozenset()) for index in range(3))
+        for domain in range(5)
+    }
+    first = BalancedBatchPlan.create(
+        by_domain, batch_size=2, total_steps=100_000, seed=42
+    )
+    second = BalancedBatchPlan.create(
+        by_domain, batch_size=2, total_steps=100_000, seed=42
+    )
+    first_path = tmp_path / "joint.json"
+    second_path = tmp_path / "pcgrad.json"
+    first.write(first_path)
+    second.write(second_path)
+
+    assert first_path.read_bytes() == second_path.read_bytes()
+    assert first_path.stat().st_size < 2_000
+    assert list(first.iter_steps(limit=4)) == list(second.iter_steps(limit=4))
+
+
+def test_rejection_sampler_handles_nearly_exhausted_catalog() -> None:
+    from ftrec.data.sampling import SameDomainNegativeSampler
+
+    catalog = tuple(range(1, 10_001))
+    example = _example(0, 1, frozenset(catalog[:-1]))
+    sampler = SameDomainNegativeSampler({1: catalog}, seed=42)
+
+    assert sampler.sample(example) == catalog[-1]

@@ -47,7 +47,7 @@ def test_joint_and_pcgrad_use_identical_batch_manifest_bytes(tmp_path: Path) -> 
         tmp_path / "pcgrad.json", _examples_by_domain(), batch_size=1, steps=2, seed=42
     )
 
-    assert joint.steps == pcgrad.steps
+    assert list(joint.iter_steps()) == list(pcgrad.iter_steps())
     assert (tmp_path / "joint.json").read_bytes() == (tmp_path / "pcgrad.json").read_bytes()
 
 
@@ -72,6 +72,7 @@ def test_joint_and_pcgrad_observe_same_losses_and_raw_cosines() -> None:
         seed=42,
         global_step=0,
         grad_clip_norm=5.0,
+        initialization_hash="shared-initialization",
     )
     pcgrad = run_multitask_step(
         pcgrad_model,
@@ -83,6 +84,7 @@ def test_joint_and_pcgrad_observe_same_losses_and_raw_cosines() -> None:
         seed=42,
         global_step=0,
         grad_clip_norm=5.0,
+        initialization_hash="shared-initialization",
     )
 
     assert pcgrad.domain_losses == pytest.approx(joint.domain_losses)

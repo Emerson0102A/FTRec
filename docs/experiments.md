@@ -46,6 +46,8 @@ bash scripts/run_analysis.sh
 
 每个组合独立写入 staging 目录，成功后原子发布并生成 `COMPLETE.json`。再次执行时，配置、数据和 checkpoint 指纹一致的已完成组合会跳过；指纹冲突会停止并要求显式 `--force`。因此服务器中断后直接重新执行同一阶段脚本即可从未完成组合继续。
 
+训练矩阵可以按“已完成组合”恢复，但单次预处理目前不能从 SQLite 中间点续跑。旧版 `run_preprocess.sh` 已运行很久时，不要直接按 `Ctrl+C`，否则 staging 数据会被清理；应先决定是让旧进程完成，还是明确接受重新开始后再切换到优化版。
+
 单组合示例：
 
 ```bash
@@ -55,6 +57,17 @@ ftrec-adapt --config configs/experiment/lora.yaml --pretrain-method pcgrad --dom
 
 ## 产物
 
-每个训练目录包含 resolved lineage、`batch_manifest.json`、逐 epoch `metrics.jsonl`、`best.pt`、`last.pt`、`result.json` 和 `COMPLETE.json`。Joint/PCGrad 另有 `gradient_conflicts.jsonl`。LoRA checkpoint 只保存 adapter 张量和 backbone SHA-256。
+每个训练目录包含 resolved lineage、`batch_manifest.json`、逐 epoch `metrics.jsonl`、`best.pt`、`last.pt`、`result.json` 和 `COMPLETE.json`。`batch_manifest.json` 是小型确定性配方（seed、算法、总 step 和各域样本指纹），实际 batch 在训练时流式生成，不再保存数千万个样本编号。Joint/PCGrad 另有 `gradient_conflicts.jsonl`。LoRA checkpoint 只保存 adapter 张量和 backbone SHA-256。
 
 分析目录包含 `results.csv`、`summary.csv`、`recovery.csv`、`warnings.json`，以及四类图的 PNG/PDF：预训练对比、LoRA rank 曲线、Recovery 曲线和梯度冲突热图。Recovery 不裁剪；分母接近零或 FullFT 低于预训练时会保留 NaN/符号并写入警告。
+
+## 性能与进度日志
+
+预处理会向 stderr 输出 JSON 进度，包括当前域、累计行数、吞吐、elapsed 和基于压缩输入字节的 ETA；k-core 每轮和导出阶段也会报告进度。训练每个 epoch 报告 elapsed、ETA 和验证指标。保留日志的推荐方式：
+
+```bash
+bash scripts/run_preprocess.sh 2>&1 | tee preprocess.log
+bash scripts/run_joint.sh 2>&1 | tee joint.log
+```
+
+正式配置默认 `evaluation_batch_size: 128`、`evaluation_chunk_size: 4096`。显存不足时先把 evaluation batch 调到 64 或 32；评测仍慢但显存充足时再增到 256。单张 4090D 默认顺序跑实验组合：SASRec 较小不代表多进程一定更快，Joint/PCGrad 和 full-catalog 评测通常已经能占满 GPU。只有通过 `nvidia-smi dmon` 确认 GPU 长期空闲、且单进程显存明显不足总显存的一半时，才值得手工测试两个组合并发。
