@@ -63,11 +63,17 @@ ftrec-adapt --config configs/experiment/lora.yaml --pretrain-method pcgrad --dom
 
 ## 性能与进度日志
 
-预处理会向 stderr 输出 JSON 进度，包括当前域、累计行数、吞吐、elapsed 和基于压缩输入字节的 ETA；k-core 每轮和导出阶段也会报告进度。训练每个 epoch 报告 elapsed、ETA 和验证指标。保留日志的推荐方式：
+预处理会向 stderr 显示三类 `tqdm` 进度条：每个域 gzip 压缩字节的读取进度、joint k-core 的轮次及当轮删除量、Parquet/sequence 的 interaction 导出进度。阶段完成时还会输出 JSON，包括累计行数、吞吐、elapsed 和 ETA。训练每个 epoch 报告 elapsed、ETA 和验证指标。保留日志的推荐方式：
 
 ```bash
 bash scripts/run_preprocess.sh 2>&1 | tee preprocess.log
 bash scripts/run_joint.sh 2>&1 | tee joint.log
+```
+
+非交互任务如果不希望输出进度条，可使用：
+
+```bash
+bash scripts/run_preprocess.sh --no-progress
 ```
 
 正式配置默认 `evaluation_batch_size: 128`、`evaluation_chunk_size: 4096`。显存不足时先把 evaluation batch 调到 64 或 32；评测仍慢但显存充足时再增到 256。单张 4090D 默认顺序跑实验组合：SASRec 较小不代表多进程一定更快，Joint/PCGrad 和 full-catalog 评测通常已经能占满 GPU。只有通过 `nvidia-smi dmon` 确认 GPU 长期空闲、且单进程显存明显不足总显存的一半时，才值得手工测试两个组合并发。

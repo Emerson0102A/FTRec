@@ -159,3 +159,32 @@ def test_preprocess_amazon5_publishes_a_valid_dataset_atomically(tmp_path: Path)
     assert (output / "COMPLETE.json").is_file()
     assert not list(tmp_path.glob("*.sqlite*"))
     assert not list(tmp_path.glob(".processed.staging-*"))
+
+
+def test_preprocess_reports_ingest_kcore_and_export_progress(
+    tmp_path: Path, capsys
+) -> None:
+    from data_helpers import write_amazon5_fixture
+    from ftrec.data.preprocessing import PreprocessSettings, preprocess_amazon5
+
+    rows = {
+        domain: [(f"u{user}", f"{domain}-item", "5", str(1000 + index)) for user in range(3)]
+        for index, domain in enumerate(["Health", "Clothing", "Beauty", "Grocery", "Sports"])
+    }
+    input_dir = write_amazon5_fixture(tmp_path / "raw", rows)
+
+    preprocess_amazon5(
+        PreprocessSettings(
+            input_dir=input_dir,
+            output_dir=tmp_path / "processed",
+            min_user_interactions=5,
+            min_item_interactions=3,
+            batch_size=2,
+        )
+    )
+
+    stderr = capsys.readouterr().err
+    assert "ingest Health" in stderr
+    assert "joint k-core" in stderr
+    assert "export interactions" in stderr
+    assert "100%" in stderr

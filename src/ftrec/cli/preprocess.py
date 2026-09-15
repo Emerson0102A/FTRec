@@ -21,6 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int)
     parser.add_argument("--sqlite-path", type=Path)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--no-progress", action="store_true")
     parser.add_argument("--force", action="store_true")
     return parser
 
@@ -38,6 +39,7 @@ def main(argv: list[str] | None = None) -> int:
         "batch_size": args.batch_size or int(config["batch_size"]),
         "sqlite_path": args.sqlite_path,
         "force": args.force,
+        "progress": bool(config.get("progress", True)) and not args.no_progress,
     }
     if args.dry_run:
         from ftrec.data.amazon import AMAZON5_DOMAINS
