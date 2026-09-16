@@ -122,6 +122,13 @@ def main(argv: list[str] | None = None) -> int:
         ),
         gradient_conflict_enabled=bool(gradient_config.get("enabled", True)),
         gradient_conflict_ema_beta=float(gradient_config.get("ema_beta", 0.9)),
+        gradient_conflict_checkpoint_steps=int(
+            gradient_config.get("checkpoint_steps", 1)
+        ),
+        gradient_conflict_checkpoint_seed=int(
+            gradient_config.get("checkpoint_seed", 2026)
+        ),
+        pcgrad_projection_scope=str(config.get("pcgrad_projection_scope", "backbone")),
         bf16=bool(config.get("bf16", False)),
         data_hash=_data_hash(processed_dir),
         force=args.force,

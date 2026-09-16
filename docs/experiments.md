@@ -137,16 +137,26 @@ ftrec-adapt --config configs/experiment/lora.yaml --pretrain-method pcgrad --dom
 
 ## 产物
 
-每个训练目录包含 resolved lineage、`batch_manifest.json`、逐 epoch `metrics.jsonl`、`best.pt`、`last.pt`、`result.json` 和 `COMPLETE.json`。`batch_manifest.json` 是小型确定性配方（seed、算法、总 step 和各域样本指纹），实际 batch 在训练时流式生成，不再保存数千万个样本编号。Joint/PCGrad 还会从 PCGrad 投影前的 raw domain gradients 生成：
+每个训练目录包含 resolved lineage、`batch_manifest.json`、逐 epoch `metrics.jsonl`、`best.pt`、`last.pt`、`result.json` 和 `COMPLETE.json`。`batch_manifest.json` 是小型确定性配方（seed、算法、总 step 和各域样本指纹），实际 batch 在训练时流式生成，不再保存数千万个样本编号。
 
-- `gradient_conflicts.jsonl`：每次采样点的完整矩阵；
-- `gradient_conflict_pairs.csv`：可直接分析的 domain pair 长表；
-- `gradient_conflict_summary.json`：最终 EMA group/domain/layer 汇总；
-- `gradient_conflict_by_domain_layer.csv`：`domain,layer,q_conflict,v_conflict,qv_conflict`，可与 LoRA gain 直接 join。
+Joint/PCGrad 的冲突统计分为两个口径。训练轨迹文件用于审计 early stopping 前后的变化：
 
-这些统计包含动态生成的 `block_l_q`、`block_l_v`、`block_l_qv`，同时保留原有
-attention、FFN 和 full groups。LoRA checkpoint 只保存 adapter 张量和 backbone
-SHA-256。
+- `gradient_conflicts.jsonl`；
+- `gradient_conflict_pairs.csv`；
+- `gradient_conflict_summary_training.json`；
+- `gradient_conflict_by_domain_layer_training.csv`。
+
+加载 `best.pt` 后，程序会用固定 `checkpoint_seed` 和固定诊断 batch 重新计算 raw domain gradients，不执行 optimizer step。以下文件是后续 conflict↔LoRA utility 分析的正式口径：
+
+- `gradient_conflicts_best_checkpoint.jsonl`；
+- `gradient_conflict_pairs_best_checkpoint.csv`；
+- `gradient_conflict_summary.json`；
+- `gradient_conflict_by_domain_layer.csv`：`domain,layer,q_conflict,v_conflict,qv_conflict`，可与 LoRA gain 直接 join；
+- `gradient_profile_batch_manifest.json`：固定诊断 batch 的可复现配方。
+
+正式配置使用 `gradient_conflict.checkpoint_steps: 100`、`checkpoint_seed: 2026`。分析器在同一 run 同时存在两种日志时优先读取 best-checkpoint 文件。所有记录包含动态生成的 `block_l_q`、`block_l_v`、`block_l_qv`，并保留 attention、FFN、item embedding、`backbone` 与 full groups。`result.json` 记录 profile scope、checkpoint epoch、诊断步数/种子和 PCGrad 投影范围。LoRA checkpoint 只保存 adapter 张量和 backbone SHA-256。
+
+PCGrad 默认 `pcgrad_projection_scope: backbone`：只对 position embedding、Q/K/V/O、FFN、LayerNorm 等非 item-embedding 参数做 gradient surgery；`item_embedding.weight` 的五域 raw gradients 不投影，直接做算术平均。旧版全参数 PCGrad 结果与该口径不同，不能混合比较。
 
 LoRA 与 FullFT 会先把尚未更新的模型作为 `epoch=0` 做一次验证，并把它纳入
 early stopping 与最佳 checkpoint 选择。若微调始终未超过初始模型，`best.pt` 会保留

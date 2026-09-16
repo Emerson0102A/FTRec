@@ -58,4 +58,13 @@ def test_production_configs_follow_gmflowrec_training_protocol() -> None:
         conflict = load_config(root / "configs" / "experiment" / f"{name}.yaml")[
             "gradient_conflict"
         ]
-        assert conflict == {"enabled": True, "ema_beta": 0.9, "log_interval": 100}
+        assert conflict == {
+            "enabled": True,
+            "ema_beta": 0.9,
+            "log_interval": 100,
+            "checkpoint_steps": 100,
+            "checkpoint_seed": 2026,
+        }
+    assert load_config(root / "configs" / "experiment" / "pcgrad.yaml")[
+        "pcgrad_projection_scope"
+    ] == "backbone"

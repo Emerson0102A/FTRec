@@ -177,11 +177,9 @@ L_joint = mean(L_health, L_clothing, L_beauty, L_grocery, L_sports)
 
 ### 7.3 PCGrad
 
-PCGrad 对五个 domain 原始梯度执行标准 pairwise projection：当 `dot(g_i, g_j) < 0` 时，从 `g_i` 中减去其在原始、未投影 `g_j` 上的冲突分量。每个 task 的投影遍历顺序由 `(seed, global_step, task_id)` 确定，随后对投影后的 task gradients 求平均。Joint 对五个原始 task gradients 求平均。两种方法都只在聚合完成后执行同一 global gradient clipping，再执行 optimizer step。
+PCGrad 对五个 domain 的 backbone 原始梯度执行标准 pairwise projection：当 backbone 内的 `dot(g_i, g_j) < 0` 时，从 `g_i` 中减去其在原始、未投影 `g_j` 上的冲突分量。每个 task 的投影遍历顺序由 `(seed, global_step, task_id)` 确定，随后对投影后的 task gradients 求平均。投影范围包含 position embedding、Q/K/V/O、FFN、LayerNorm/final norm 等所有非 item-embedding 参数。
 
-所有可训练 SASRec 参数都纳入 PCGrad，包括 item embedding。item embedding 使用 sparse gradient 表示，梯度点积、范数、线性组合和平均必须原生支持 coalesced sparse tensor，不能为了实现方便将完整 embedding 梯度 densify。Joint 与 PCGrad 使用相同的 dense AdamW 与 sparse SparseAdam 参数分组，确保优化器差异仅是 projection。
-
-若生产数据或当前 PyTorch 对 tied sparse embedding 路径存在已验证的不兼容，管线必须明确失败并给出诊断；不得静默排除 embedding 或改用不同 loss。任何降级方案需要新的实验口径批准。
+`item_embedding.weight` 不参与点积、范数、投影系数或梯度修正；五个 domain 的 sparse item-embedding raw gradients直接做算术平均。Joint 对全部参数的五个原始 task gradients 求平均。两种方法都只在聚合完成后执行同一 global gradient clipping，再执行 optimizer step，并继续使用相同的 dense AdamW 与 sparse SparseAdam 参数分组。checkpoint、resolved config 和 `result.json` 必须显式记录 `pcgrad_projection_scope`，不得把旧版 full-scope PCGrad 与 backbone-scope 结果混合比较。
 
 ### 7.4 Gradient conflict logging
 
@@ -189,11 +187,11 @@ Joint 与 PCGrad 都记录 projection 之前的 raw task gradients。日志至�
 
 - 每次采样的 5×5 cosine matrix；
 - 每对 domain 的负余弦比例；
-- full model、item embedding、position embedding；
+- full model、backbone、item embedding、position embedding；
 - 每层 attention 和 FFN 参数组；
 - 采样 step、epoch、seed 和方法。
 
-日志频率由配置控制。PCGrad 另外记录 projection 后 cosine 和每个 task 被投影的次数；核心论文比较仍使用 raw gradient conflict。
+训练过程日志频率由配置控制，并保留到 `*_training` 汇总中作为轨迹审计。训练停止后必须重新加载 `best.pt`，使用固定诊断 seed 和固定 batch manifest 在该 checkpoint 上计算 raw gradients；不得执行 optimizer step、修改模型参数或依赖训练结束时的 RNG 状态。正式 `gradient_conflict_summary.json` 和 `gradient_conflict_by_domain_layer.csv` 必须来自这个 best-checkpoint-local profile，并记录 checkpoint epoch、诊断 seed/steps 和 profile scope。核心 conflict↔LoRA utility 比较只使用该正式口径；训练轨迹不能替代它。
 
 ## 8. LoRA 与 Full Fine-Tuning
 

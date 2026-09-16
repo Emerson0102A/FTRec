@@ -209,3 +209,30 @@ def test_logger_writes_pairwise_ema_and_domain_layer_summaries(tmp_path: Path) -
             "qv_conflict": "0.5",
         },
     ]
+
+
+def test_logger_marks_best_checkpoint_profile_scope(tmp_path: Path) -> None:
+    """Catch a checkpoint-local conflict summary being mistaken for training history."""
+    from ftrec.training.pcgrad import GradientConflictLogger, TaskGradients
+
+    tasks = (
+        TaskGradients(("w",), (torch.tensor([1.0]),)),
+        TaskGradients(("w",), (torch.tensor([-1.0]),)),
+    )
+    logger = GradientConflictLogger(
+        tmp_path / "gradient_conflicts_best_checkpoint.jsonl",
+        ("Health", "Beauty"),
+        profile_scope="best_checkpoint",
+    )
+    record = logger.record(
+        method="joint", seed=42, epoch=3, step=0, raw=tasks
+    )
+    summary = logger.finalize(
+        metadata={"checkpoint_epoch": 3, "diagnostic_steps": 1, "diagnostic_seed": 2026}
+    )
+
+    assert record["profile_scope"] == "best_checkpoint"
+    assert summary["profile_scope"] == "best_checkpoint"
+    assert summary["checkpoint_epoch"] == 3
+    assert summary["diagnostic_steps"] == 1
+    assert summary["diagnostic_seed"] == 2026

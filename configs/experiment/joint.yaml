@@ -23,3 +23,5 @@ gradient_conflict:
   enabled: true
   ema_beta: 0.9
   log_interval: 100
+  checkpoint_steps: 100
+  checkpoint_seed: 2026

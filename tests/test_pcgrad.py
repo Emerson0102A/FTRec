@@ -89,3 +89,42 @@ def test_pcgrad_reports_projection_count_for_each_task() -> None:
 
     assert len(counts) == 2
     assert sum(counts) >= 1
+
+
+def test_pcgrad_projection_scope_leaves_item_embeddings_for_plain_mean() -> None:
+    """Catch backbone surgery changing or reweighting item-embedding gradients."""
+    from ftrec.training.pcgrad import (
+        TaskGradients,
+        assign_mean_gradients,
+        project_pcgrad_with_counts,
+    )
+
+    names = ("item_embedding.weight", "blocks.0.attention.q_proj.weight")
+    first = TaskGradients(
+        names, (torch.tensor([2.0]), torch.tensor([1.0]))
+    )
+    second = TaskGradients(
+        names, (torch.tensor([6.0]), torch.tensor([-1.0]))
+    )
+
+    projected, counts = project_pcgrad_with_counts(
+        (first, second),
+        seed=42,
+        step=0,
+        projection_names=("blocks.0.attention.q_proj.weight",),
+    )
+
+    torch.testing.assert_close(projected[0].values[0], torch.tensor([2.0]))
+    torch.testing.assert_close(projected[1].values[0], torch.tensor([6.0]))
+    embedding = torch.nn.Parameter(torch.zeros(1))
+    backbone = torch.nn.Parameter(torch.zeros(1))
+    assign_mean_gradients(
+        {
+            "item_embedding.weight": embedding,
+            "blocks.0.attention.q_proj.weight": backbone,
+        },
+        projected,
+    )
+    torch.testing.assert_close(embedding.grad, torch.tensor([4.0]))
+    torch.testing.assert_close(backbone.grad, torch.tensor([0.0]))
+    assert counts == (1, 1)

@@ -364,3 +364,25 @@ def test_parallel_pilot_interrupt_terminates_inflight_children(monkeypatch) -> N
 
     assert len(processes) == 2
     assert processes[1].terminated
+
+
+def test_analysis_prefers_best_checkpoint_gradient_records(tmp_path: Path) -> None:
+    """Catch conflict figures silently using post-best training trajectory records."""
+    import json
+
+    from ftrec.cli.analyze import _read_gradient_records
+
+    run = tmp_path / "pretrain" / "joint" / "all-domains" / "seed-42"
+    run.mkdir(parents=True)
+    (run / "gradient_conflicts.jsonl").write_text(
+        json.dumps({"profile_scope": "training_trajectory", "step": 47}) + "\n",
+        encoding="utf-8",
+    )
+    (run / "gradient_conflicts_best_checkpoint.jsonl").write_text(
+        json.dumps({"profile_scope": "best_checkpoint", "step": 0}) + "\n",
+        encoding="utf-8",
+    )
+
+    records = _read_gradient_records(tmp_path)
+
+    assert records == ({"profile_scope": "best_checkpoint", "step": 0},)

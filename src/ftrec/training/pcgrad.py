@@ -63,6 +63,7 @@ def _gradient_dot_tensor(
     right: TaskGradients,
     *,
     prefixes: tuple[str, ...] | None = None,
+    names: frozenset[str] | None = None,
 ) -> torch.Tensor | None:
     if left.names != right.names:
         raise ValueError("task gradients must use identical parameter ordering")
@@ -70,7 +71,12 @@ def _gradient_dot_tensor(
     for name, left_value, right_value in zip(
         left.names, left.values, right.values, strict=True
     ):
-        if not _selected(name, prefixes) or left_value is None or right_value is None:
+        if (
+            not _selected(name, prefixes)
+            or (names is not None and name not in names)
+            or left_value is None
+            or right_value is None
+        ):
             continue
         value = _tensor_dot(left_value, right_value)
         total = value if total is None else total + value
@@ -127,32 +133,61 @@ def _clone(gradients: TaskGradients) -> TaskGradients:
 
 
 def _combine(
-    left: TaskGradients, right: TaskGradients, factor: float
+    left: TaskGradients,
+    right: TaskGradients,
+    factor: float,
+    *,
+    names: frozenset[str] | None = None,
 ) -> TaskGradients:
     if left.names != right.names:
         raise ValueError("task gradients must use identical parameter ordering")
     return TaskGradients(
         left.names,
         tuple(
-            _add_scaled(left_value, right_value, factor)
-            for left_value, right_value in zip(left.values, right.values, strict=True)
+            (
+                _add_scaled(left_value, right_value, factor)
+                if names is None or name in names
+                else _add_scaled(left_value, None, 0.0)
+            )
+            for name, left_value, right_value in zip(
+                left.names, left.values, right.values, strict=True
+            )
         ),
     )
 
 
 def project_pcgrad(
-    tasks: Sequence[TaskGradients], *, seed: int, step: int
+    tasks: Sequence[TaskGradients],
+    *,
+    seed: int,
+    step: int,
+    projection_names: Sequence[str] | None = None,
 ) -> tuple[TaskGradients, ...]:
-    projected, _ = project_pcgrad_with_counts(tasks, seed=seed, step=step)
+    projected, _ = project_pcgrad_with_counts(
+        tasks, seed=seed, step=step, projection_names=projection_names
+    )
     return projected
 
 
 def project_pcgrad_with_counts(
-    tasks: Sequence[TaskGradients], *, seed: int, step: int
+    tasks: Sequence[TaskGradients],
+    *,
+    seed: int,
+    step: int,
+    projection_names: Sequence[str] | None = None,
 ) -> tuple[tuple[TaskGradients, ...], tuple[int, ...]]:
     if not tasks:
         raise ValueError("PCGrad requires at least one task")
     originals = tuple(_clone(task) for task in tasks)
+    selected_names = (
+        frozenset(str(name) for name in projection_names)
+        if projection_names is not None
+        else None
+    )
+    if selected_names is not None:
+        unknown = selected_names - set(originals[0].names)
+        if unknown:
+            raise ValueError(f"unknown PCGrad projection parameters: {sorted(unknown)}")
     projected: list[TaskGradients] = []
     projection_counts: list[int] = []
     for task_index, task in enumerate(originals):
@@ -162,15 +197,17 @@ def project_pcgrad_with_counts(
         random.Random(seed * 1_000_003 + step * 101 + task_index).shuffle(peers)
         for peer_index in peers:
             peer = originals[peer_index]
-            dot_tensor = _gradient_dot_tensor(current, peer)
-            denominator_tensor = _gradient_dot_tensor(peer, peer)
+            dot_tensor = _gradient_dot_tensor(current, peer, names=selected_names)
+            denominator_tensor = _gradient_dot_tensor(peer, peer, names=selected_names)
             if dot_tensor is None or denominator_tensor is None:
                 continue
             dot, denominator = torch.stack(
                 (dot_tensor, denominator_tensor)
             ).detach().cpu().tolist()
             if dot < 0.0 and denominator > 0.0:
-                current = _combine(current, peer, -dot / denominator)
+                current = _combine(
+                    current, peer, -dot / denominator, names=selected_names
+                )
                 count += 1
         projected.append(current)
         projection_counts.append(count)
@@ -306,6 +343,7 @@ class GradientConflictLogger:
         pairwise_path: str | Path | None = None,
         summary_path: str | Path | None = None,
         layer_table_path: str | Path | None = None,
+        profile_scope: str = "training_trajectory",
     ) -> None:
         if not 0 <= ema_beta < 1:
             raise ValueError("ema_beta must be in [0, 1)")
@@ -313,6 +351,7 @@ class GradientConflictLogger:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.domain_names = tuple(domain_names)
         self.ema_beta = ema_beta
+        self.profile_scope = str(profile_scope)
         self.pairwise_path = Path(pairwise_path) if pairwise_path else self.path.with_name(
             "gradient_conflict_pairs.csv"
         )
@@ -432,6 +471,7 @@ class GradientConflictLogger:
             "domain_names": self.domain_names,
             "epoch": epoch,
             "method": method,
+            "profile_scope": self.profile_scope,
             "negative_gradient_ratio": {
                 name: negative_pair_ratio(matrix) for name, matrix in raw_groups.items()
             },
@@ -483,14 +523,19 @@ class GradientConflictLogger:
             "domain_conflict": domain_conflict,
         }
 
-    def finalize(self) -> dict[str, object]:
+    def finalize(
+        self, *, metadata: Mapping[str, object] | None = None
+    ) -> dict[str, object]:
         summary: dict[str, object] = {
             "method": self._latest_method,
+            "profile_scope": self.profile_scope,
             "seed": self._latest_seed,
             "ema_beta": self.ema_beta,
             "steps_logged": self._steps_logged,
             "groups": {group: self._group_summary(group) for group in self._groups},
         }
+        if metadata is not None:
+            summary.update({str(key): value for key, value in metadata.items()})
         self.summary_path.write_text(
             json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",

@@ -43,6 +43,7 @@ from ftrec.training.engine import (
 from ftrec.training.objectives import sampled_bce_loss
 from ftrec.training.pcgrad import (
     GradientConflictLogger,
+    TaskGradients,
     assign_mean_gradients,
     collect_task_gradients,
     cosine_matrix,
@@ -73,6 +74,9 @@ class PretrainSettings:
     gradient_log_interval: int = 1
     gradient_conflict_enabled: bool = True
     gradient_conflict_ema_beta: float = 0.9
+    gradient_conflict_checkpoint_steps: int = 1
+    gradient_conflict_checkpoint_seed: int = 2026
+    pcgrad_projection_scope: str = "backbone"
     bf16: bool = False
     data_hash: str = "unknown"
     force: bool = False
@@ -104,6 +108,10 @@ class PretrainSettings:
             raise ValueError("gradient_log_interval must be positive")
         if not 0 <= self.gradient_conflict_ema_beta < 1:
             raise ValueError("gradient_conflict_ema_beta must be in [0, 1)")
+        if self.gradient_conflict_checkpoint_steps < 1:
+            raise ValueError("gradient_conflict_checkpoint_steps must be positive")
+        if self.pcgrad_projection_scope not in {"backbone", "full"}:
+            raise ValueError("pcgrad_projection_scope must be 'backbone' or 'full'")
 
 
 @dataclass(frozen=True)
@@ -156,6 +164,23 @@ class SingleTaskStepResult:
     loss: float
     gradient_norm: float
     initialization_hash: str
+
+
+def pcgrad_projection_parameter_names(
+    names: Sequence[str], *, scope: str
+) -> tuple[str, ...]:
+    """Resolve the parameters PCGrad may project without changing task gradients elsewhere."""
+    names = tuple(str(name) for name in names)
+    if scope == "full":
+        return names
+    if scope == "backbone":
+        return backbone_parameter_names(names)
+    raise ValueError("pcgrad projection scope must be 'backbone' or 'full'")
+
+
+def backbone_parameter_names(names: Sequence[str]) -> tuple[str, ...]:
+    """Return the stable non-item-embedding diagnostic parameter group."""
+    return tuple(str(name) for name in names if name != "item_embedding.weight")
 
 
 def resolve_pretrain_steps_per_epoch(
@@ -250,6 +275,7 @@ def run_multitask_step(
     samplers: Mapping[int, SameDomainNegativeSampler] | None = None,
     initialization_hash: str = "not-computed",
     compute_cosine: bool = True,
+    pcgrad_projection_scope: str = "backbone",
 ) -> MultiTaskStepResult:
     if method not in {"joint", "pcgrad"}:
         raise ValueError("method must be 'joint' or 'pcgrad'")
@@ -288,9 +314,18 @@ def run_multitask_step(
     }
     raw = tuple(task_gradients)
     raw_cosine = cosine_matrix(raw) if compute_cosine else ()
+    projection_names = pcgrad_projection_parameter_names(
+        tuple(name for name, _ in named_parameters), scope=pcgrad_projection_scope
+    )
+    backbone_names = backbone_parameter_names(
+        tuple(name for name, _ in named_parameters)
+    )
     if method == "pcgrad":
         gradients_for_step, projection_counts = project_pcgrad_with_counts(
-            raw, seed=seed, step=global_step
+            raw,
+            seed=seed,
+            step=global_step,
+            projection_names=projection_names,
         )
         projected_cosine = cosine_matrix(gradients_for_step) if compute_cosine else ()
     else:
@@ -298,7 +333,10 @@ def run_multitask_step(
         projected_cosine = None
         projection_counts = None
     if gradient_logger is not None:
-        groups: dict[str, tuple[str, ...] | None] = {"full": None}
+        groups: dict[str, tuple[str, ...] | None] = {
+            "full": None,
+            "backbone": backbone_names,
+        }
         if hasattr(model, "logging_parameter_groups"):
             groups.update(model.logging_parameter_groups())
         gradient_logger.record(
@@ -352,6 +390,138 @@ def run_single_task_step(
     norm = clip_global_grad_norm(model.parameters(), grad_clip_norm)
     optimizers.step()
     return SingleTaskStepResult(float(loss.detach().cpu()), norm, initialization_hash)
+
+
+def record_checkpoint_gradient_profile(
+    model: torch.nn.Module,
+    examples_by_domain: Mapping[int, Sequence[TargetExample]],
+    item_catalogs: Mapping[int, Sequence[int]],
+    *,
+    output_dir: Path,
+    method: str,
+    seed: int,
+    checkpoint_epoch: int,
+    diagnostic_steps: int,
+    diagnostic_seed: int,
+    batch_size: int,
+    ema_beta: float,
+    bf16: bool,
+    progress: bool,
+    pcgrad_projection_scope: str,
+) -> dict[str, object]:
+    """Measure raw domain conflicts at one fixed checkpoint without updating it."""
+    before_hash = model_state_hash(model)
+    named_parameters = tuple(
+        (name, parameter)
+        for name, parameter in model.named_parameters()
+        if parameter.requires_grad
+    )
+    names = tuple(name for name, _ in named_parameters)
+    projection_names = pcgrad_projection_parameter_names(
+        names, scope=pcgrad_projection_scope
+    )
+    backbone_names = backbone_parameter_names(names)
+    groups: dict[str, tuple[str, ...] | None] = {
+        "full": None,
+        "backbone": backbone_names,
+    }
+    if hasattr(model, "logging_parameter_groups"):
+        groups.update(model.logging_parameter_groups())
+    plan = BalancedBatchPlan.create(
+        examples_by_domain,
+        batch_size=batch_size,
+        total_steps=diagnostic_steps,
+        seed=diagnostic_seed,
+    )
+    plan.write(output_dir / "gradient_profile_batch_manifest.json")
+    lookup_by_domain = {
+        domain: {example.example_id: example for example in examples}
+        for domain, examples in examples_by_domain.items()
+    }
+    shared_sampler = SameDomainNegativeSampler(item_catalogs, diagnostic_seed)
+    samplers = {domain: shared_sampler for domain in examples_by_domain}
+    logger = GradientConflictLogger(
+        output_dir / "gradient_conflicts_best_checkpoint.jsonl",
+        [
+            DOMAIN_BY_ID[domain].name if domain in DOMAIN_BY_ID else str(domain)
+            for domain in sorted(examples_by_domain)
+        ],
+        ema_beta=ema_beta,
+        pairwise_path=output_dir / "gradient_conflict_pairs_best_checkpoint.csv",
+        summary_path=output_dir / "gradient_conflict_summary.json",
+        layer_table_path=output_dir / "gradient_conflict_by_domain_layer.csv",
+        profile_scope="best_checkpoint",
+    )
+    profile_progress = tqdm(
+        total=diagnostic_steps,
+        desc=f"profile {method} best checkpoint",
+        unit="step",
+        mininterval=1.0,
+        dynamic_ncols=True,
+        disable=not progress,
+    )
+    was_training = model.training
+    device = next(model.parameters()).device
+    rng_devices: list[int] = []
+    if device.type == "cuda":
+        rng_devices.append(
+            device.index if device.index is not None else torch.cuda.current_device()
+        )
+    try:
+        # Profiling must depend only on the checkpoint and diagnostic seed, not on
+        # how many post-best epochs happened to consume dropout RNG state.
+        with torch.random.fork_rng(devices=rng_devices):
+            model.train()
+            for diagnostic_step, batches in enumerate(plan.iter_steps()):
+                raw: list[TaskGradients] = []
+                for domain in sorted(batches):
+                    task_seed = (
+                        diagnostic_seed * 100_003
+                        + diagnostic_step * 101
+                        + domain
+                    )
+                    torch.random.default_generator.manual_seed(task_seed)
+                    if device.type == "cuda":
+                        torch.cuda.default_generators[rng_devices[0]].manual_seed(
+                            task_seed
+                        )
+                    batch = tuple(
+                        lookup_by_domain[domain][identifier]
+                        for identifier in batches[domain]
+                    )
+                    loss = _task_loss(
+                        model,
+                        batch,
+                        item_catalogs,
+                        seed=task_seed,
+                        bf16=bf16,
+                        samplers=samplers,
+                    )
+                    raw.append(collect_task_gradients(loss, named_parameters))
+                logger.record(
+                    method=method,
+                    seed=seed,
+                    epoch=checkpoint_epoch,
+                    step=diagnostic_step,
+                    raw=tuple(raw),
+                    groups=groups,
+                )
+                profile_progress.update(1)
+    finally:
+        profile_progress.close()
+        model.train(was_training)
+    after_hash = model_state_hash(model)
+    if after_hash != before_hash:
+        raise RuntimeError("checkpoint conflict profiling modified model parameters")
+    metadata = {
+        "checkpoint_epoch": checkpoint_epoch,
+        "diagnostic_seed": diagnostic_seed,
+        "diagnostic_steps": diagnostic_steps,
+        "pcgrad_projection_scope": pcgrad_projection_scope,
+        "profile_scope": "best_checkpoint",
+    }
+    logger.finalize(metadata=metadata)
+    return metadata
 
 
 def _examples_for_domains(
@@ -508,6 +678,7 @@ def train_pretraining(
         "domain": settings.domain,
         "initialization_hash": initialization_hash,
         "method": settings.method,
+        "pcgrad_projection_scope": settings.pcgrad_projection_scope,
         "seed": settings.seed,
     }
     num_total = sum(parameter.numel() for parameter in model.parameters())
@@ -583,6 +754,9 @@ def train_pretraining(
                 run.path / "gradient_conflicts.jsonl",
                 [DOMAIN_BY_ID[domain].name if domain in DOMAIN_BY_ID else str(domain) for domain in domains],
                 ema_beta=settings.gradient_conflict_ema_beta,
+                summary_path=run.path / "gradient_conflict_summary_training.json",
+                layer_table_path=run.path / "gradient_conflict_by_domain_layer_training.csv",
+                profile_scope="training_trajectory",
             )
         metrics_path = run.path / "metrics.jsonl"
         global_step = 0
@@ -646,6 +820,7 @@ def train_pretraining(
                         samplers=samplers,
                         initialization_hash=initialization_hash,
                         compute_cosine=False,
+                        pcgrad_projection_scope=settings.pcgrad_projection_scope,
                     )
                     losses.extend(step_result.domain_losses.values())
                     for domain, value in step_result.domain_losses.items():
@@ -743,7 +918,12 @@ def train_pretraining(
         training_progress.close()
 
         if gradient_logger is not None:
-            gradient_logger.finalize()
+            gradient_logger.finalize(
+                metadata={
+                    "last_trained_epoch": last_epoch,
+                    "profile_scope": "training_trajectory",
+                }
+            )
 
         if not (run.path / "best.pt").exists():
             save_checkpoint(
@@ -753,7 +933,30 @@ def train_pretraining(
                 training_state={"epoch": last_epoch, "global_step": global_step},
                 optimizer_state=optimizers.state_dict(),
             )
-        load_checkpoint(run.path / "best.pt", model, expected=metadata, map_location=device)
+        loaded_best = load_checkpoint(
+            run.path / "best.pt", model, expected=metadata, map_location=device
+        )
+        conflict_profile: dict[str, object] | None = None
+        if gradient_logger is not None:
+            checkpoint_epoch = int(
+                loaded_best.training_state.get("epoch", stopping.best_epoch or last_epoch)
+            )
+            conflict_profile = record_checkpoint_gradient_profile(
+                model,
+                train_examples,
+                store.items_by_domain,
+                output_dir=run.path,
+                method=settings.method,
+                seed=settings.seed,
+                checkpoint_epoch=checkpoint_epoch,
+                diagnostic_steps=settings.gradient_conflict_checkpoint_steps,
+                diagnostic_seed=settings.gradient_conflict_checkpoint_seed,
+                batch_size=settings.batch_size,
+                ema_beta=settings.gradient_conflict_ema_beta,
+                bf16=settings.bf16,
+                progress=settings.progress,
+                pcgrad_projection_scope=settings.pcgrad_projection_scope,
+            )
         final_test = _evaluate_domains(
             model,
             test_examples,
@@ -769,8 +972,10 @@ def train_pretraining(
             "config_hash": config_hash,
             "data_hash": settings.data_hash,
             "domain_names": _domain_names(domains),
+            "gradient_conflict_profile": conflict_profile,
             "initialization_hash": initialization_hash,
             "method": settings.method,
+            "pcgrad_projection_scope": settings.pcgrad_projection_scope,
             "num_total_params": num_total,
             "num_trainable_params": num_trainable,
             "seed": settings.seed,

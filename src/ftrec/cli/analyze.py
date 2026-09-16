@@ -35,7 +35,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _read_gradient_records(root: Path) -> tuple[dict[str, object], ...]:
     records: list[dict[str, object]] = []
-    for path in sorted(root.rglob("gradient_conflicts.jsonl")):
+    checkpoint_paths = sorted(root.rglob("gradient_conflicts_best_checkpoint.jsonl"))
+    checkpoint_runs = {path.parent for path in checkpoint_paths}
+    legacy_paths = [
+        path
+        for path in sorted(root.rglob("gradient_conflicts.jsonl"))
+        if path.parent not in checkpoint_runs
+    ]
+    for path in (*checkpoint_paths, *legacy_paths):
         with path.open("r", encoding="utf-8") as stream:
             for line in stream:
                 records.append(json.loads(line))
