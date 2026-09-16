@@ -297,7 +297,13 @@ def collect_result_rows(root: str | Path) -> tuple[ResultRow, ...]:
             pretrain_method = str(value["pretrain_method"])
             adapt_method = str(value["method"])
             rank = value.get("rank")
-        elif value.get("method") in {"single", "joint", "pcgrad"}:
+        elif value.get("method") in {
+            "single",
+            "single_mixed",
+            "joint_domain",
+            "joint",
+            "pcgrad",
+        }:
             metrics_by_domain = value["test_metrics"]
             pretrain_method = str(value["method"])
             adapt_method = "none"

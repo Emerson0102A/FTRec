@@ -21,6 +21,16 @@ CLI_MODULES = (
 )
 
 
+@pytest.mark.parametrize("method", ("single_mixed", "joint_domain"))
+def test_pretrain_cli_accepts_context_ablation_methods(method: str) -> None:
+    """Catch the new experiment modes being implemented but unreachable on servers."""
+    from ftrec.cli.pretrain import build_parser
+
+    args = build_parser().parse_args(["--method", method])
+
+    assert args.method == method
+
+
 @pytest.mark.parametrize("module", CLI_MODULES)
 def test_all_commands_expose_help(module: str) -> None:
     result = subprocess.run(
@@ -79,6 +89,8 @@ def test_server_scripts_are_fail_fast_and_stage_scoped() -> None:
         "run_preprocess.sh",
         "run_import_gmflowrec.sh",
         "run_single.sh",
+        "run_single_mixed.sh",
+        "run_joint_domain.sh",
         "run_joint.sh",
         "run_pcgrad.sh",
         "run_lora.sh",
@@ -95,11 +107,43 @@ def test_server_scripts_are_fail_fast_and_stage_scoped() -> None:
 
 def test_production_training_configs_enable_bf16() -> None:
     root = Path(__file__).parents[1]
-    for name in ("single.yaml", "joint.yaml", "pcgrad.yaml", "lora.yaml", "fullft.yaml"):
+    for name in (
+        "single.yaml",
+        "single_mixed.yaml",
+        "joint_domain.yaml",
+        "joint.yaml",
+        "pcgrad.yaml",
+        "lora.yaml",
+        "fullft.yaml",
+    ):
         config = yaml.safe_load(
             (root / "configs" / "experiment" / name).read_text(encoding="utf-8")
         )
         assert config["bf16"] is True
+
+
+def test_context_ablation_configs_match_formal_training_protocol() -> None:
+    root = Path(__file__).parents[1] / "configs" / "experiment"
+    single_mixed = yaml.safe_load(
+        (root / "single_mixed.yaml").read_text(encoding="utf-8")
+    )
+    joint_domain = yaml.safe_load(
+        (root / "joint_domain.yaml").read_text(encoding="utf-8")
+    )
+
+    assert single_mixed["method"] == "single_mixed"
+    assert single_mixed["domain"] == 0
+    assert joint_domain["method"] == "joint_domain"
+    assert joint_domain["domain"] is None
+    for config in (single_mixed, joint_domain):
+        assert config["epochs"] == 100
+        assert config["patience"] == 10
+        assert config["steps_per_epoch"] == "auto"
+        assert config["lr"] == pytest.approx(0.001)
+        assert config["embedding_lr"] == pytest.approx(0.001)
+        assert config["evaluation_protocol"] == "sampled"
+        assert config["num_eval_negatives"] == 999
+        assert config["gradient_conflict"]["enabled"] is False
 
 
 def test_adaptation_dry_run_reports_matrix_progress(tmp_path: Path) -> None:

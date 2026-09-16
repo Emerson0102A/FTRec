@@ -158,6 +158,59 @@ Joint/PCGrad 的冲突统计分为两个口径。训练轨迹文件用于审计 
 
 PCGrad 默认 `pcgrad_projection_scope: backbone`：只对 position embedding、Q/K/V/O、FFN、LayerNorm 等非 item-embedding 参数做 gradient surgery；`item_embedding.weight` 的五域 raw gradients 不投影，直接做算术平均。旧版全参数 PCGrad 结果与该口径不同，不能混合比较。
 
+## 共享参数与混合上下文的 2×2 消融
+
+Single 明显优于 Joint 时，差距可能来自两种不同机制：五域共享同一套模型参数，或
+输入序列混入其他域的历史行为。以下四种模式只改变这两个因素，不修改 SASRec
+结构、学习率、balanced batch、固定候选集或 early stopping：
+
+| method | 模型参数 | 输入上下文 | 运行数（单 seed） |
+| --- | --- | --- | ---: |
+| `single` | 每域独立 | 仅目标域 | 5 |
+| `single_mixed` | 每域独立 | 五域混合 | 5 |
+| `joint_domain` | 五域共享 | 仅目标域 | 1 |
+| `joint` | 五域共享 | 五域混合 | 1 |
+
+已有 `single` 和 `joint` 结果无需重跑。补 seed 42 的另外两个格子前可先检查计划：
+
+```bash
+bash scripts/run_single_mixed.sh --seed 42 --dry-run
+bash scripts/run_joint_domain.sh --seed 42 --dry-run
+```
+
+确认后建议分别放入两个 tmux 会话；同一张 GPU 上并发是否缩短总墙钟时间取决于
+GPU 利用率和显存，先观察 `nvidia-smi`，若吞吐下降明显就顺序运行：
+
+```bash
+mkdir -p logs
+bash scripts/run_single_mixed.sh --seed 42 2>&1 | tee logs/single-mixed-seed-42.log
+
+bash scripts/run_joint_domain.sh --seed 42 2>&1 | tee logs/joint-domain-seed-42.log
+```
+
+`single_mixed` 依次训练五个独立模型；`joint_domain` 训练一个五域 balanced-batch
+共享模型。两个配置均为最多 100 epoch、patience 10、学习率和 embedding 学习率
+0.001，并复用作者预生成的 999 个负样本。冲突日志对这两个纯消融关闭，以免增加
+额外开销；这不会改变 optimizer update。
+
+完成后重新汇总已有全部结果：
+
+```bash
+ftrec-analyze \
+  --runs-root runs \
+  --output-dir results/context-ablation-seed-42 \
+  --force
+```
+
+重点比较两组受控差值：
+
+- 上下文干扰：`single_mixed - single`，以及 `joint - joint_domain`；
+- 参数共享影响：`joint_domain - single`，以及 `joint - single_mixed`。
+
+若前两项明显为负，主要问题是混合序列上下文；若后两项明显为负，主要问题是共享
+参数造成的负迁移；两类差值都明显为负则说明两种机制同时存在。先用 seed 42 判断
+效应方向，只有差值大于评测噪声后再补 43、44 等随机种子。
+
 LoRA 与 FullFT 会先把尚未更新的模型作为 `epoch=0` 做一次验证，并把它纳入
 early stopping 与最佳 checkpoint 选择。若微调始终未超过初始模型，`best.pt` 会保留
 epoch 0，避免强制采用负迁移的 checkpoint。`metrics.jsonl` 的首行以

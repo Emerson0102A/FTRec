@@ -1,4 +1,4 @@
-"""Train Single, Joint, or PCGrad SASRec backbones."""
+"""Train SASRec backbones for baseline and context-ablation experiments."""
 
 from __future__ import annotations
 
@@ -8,14 +8,13 @@ from pathlib import Path
 
 from ftrec.artifacts import sha256_file
 from ftrec.config import load_config
-from ftrec.data.datasets import (
-    SequenceStore,
-    build_mixed_examples,
-    build_single_domain_examples,
-)
+from ftrec.data.datasets import SequenceStore
 from ftrec.models.sasrec import SASRecConfig
 from ftrec.training.pretrain import (
+    PRETRAIN_METHODS,
     PretrainSettings,
+    build_pretraining_examples,
+    method_spec,
     pretrain_config_hash,
     train_pretraining,
 )
@@ -31,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--processed-dir", type=Path)
     parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--method", choices=("single", "joint", "pcgrad"))
+    parser.add_argument("--method", choices=PRETRAIN_METHODS)
     parser.add_argument("--domain", type=int)
     parser.add_argument("--seed", type=int)
     parser.add_argument("--epochs", type=int)
@@ -134,23 +133,22 @@ def main(argv: list[str] | None = None) -> int:
         force=args.force,
         progress=bool(config.get("progress", True)) and not args.no_progress,
     )
-    domains = (domain,) if method == "single" else tuple(sorted(store.items_by_domain))
-    counts: dict[int, int] = {}
-    for domain_id in domains:
-        if domain_id is None:
-            continue
-        if method == "single":
-            examples = build_single_domain_examples(
-                store, split="train", domain=domain_id, maxlen=model_config.maxlen
-            )
-        else:
-            examples = build_mixed_examples(
-                store,
-                split="train",
-                target_domain=domain_id,
-                maxlen=model_config.maxlen,
-            )
-        counts[domain_id] = len(examples)
+    specification = method_spec(method)
+    domains = (
+        (int(domain),)
+        if specification.single_task and domain is not None
+        else tuple(sorted(store.items_by_domain))
+    )
+    examples_by_domain = build_pretraining_examples(
+        store,
+        split="train",
+        domains=domains,
+        maxlen=model_config.maxlen,
+        method=method,
+    )
+    counts = {
+        domain_id: len(examples) for domain_id, examples in examples_by_domain.items()
+    }
     resolved_hash = pretrain_config_hash(model_config, settings)
     completion_path = output_dir / "COMPLETE.json"
     decision = "create"

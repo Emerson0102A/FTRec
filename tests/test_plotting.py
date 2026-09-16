@@ -45,3 +45,36 @@ def test_analysis_generates_all_required_figures(tmp_path: Path) -> None:
     }
     assert len(outputs) == 8
     assert all(path.stat().st_size > 1000 for path in outputs)
+
+
+def test_pretraining_figure_includes_context_ablation_methods() -> None:
+    """Catch the canonical comparison plot omitting completed ablations."""
+    from ftrec.analysis.plotting import _figure_pretraining
+    from ftrec.analysis.results import ResultRow
+
+    rows = tuple(
+        ResultRow(
+            42,
+            "Health",
+            method,
+            "none",
+            None,
+            "test",
+            "sampled",
+            0.3,
+            0.2,
+            10,
+            0,
+            100,
+            100,
+            "best.pt",
+            "config",
+            "data",
+        )
+        for method in ("single", "single_mixed", "joint_domain", "joint", "pcgrad")
+    )
+
+    figure = _figure_pretraining(rows)
+    labels = figure.axes[0].get_legend_handles_labels()[1]
+
+    assert labels == ["single", "single_mixed", "joint_domain", "joint", "pcgrad"]

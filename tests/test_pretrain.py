@@ -7,6 +7,67 @@ from pathlib import Path
 import pytest
 
 
+@pytest.mark.parametrize(
+    ("method", "expected_context", "expected_single_task"),
+    [
+        ("single", (0, 0, 1), True),
+        ("single_mixed", (0, 101, 1), True),
+        ("joint_domain", (0, 0, 1), False),
+        ("joint", (0, 101, 1), False),
+        ("pcgrad", (0, 101, 1), False),
+    ],
+)
+def test_pretraining_method_matrix_controls_context_and_parameter_sharing(
+    method: str, expected_context: tuple[int, ...], expected_single_task: bool
+) -> None:
+    """Catch either ablation changing both experimental factors at once."""
+    from ftrec.data.datasets import SequenceRecord, SequenceStore
+    from ftrec.training.pretrain import build_pretraining_examples, method_spec
+
+    store = SequenceStore(
+        (
+            SequenceRecord(
+                user_id=1,
+                item_ids=(101, 1, 2),
+                domain_ids=(1, 0, 0),
+                timestamps=(1, 2, 3),
+                splits=("train", "train", "train"),
+            ),
+        ),
+        {0: (1, 2), 1: (101,)},
+    )
+
+    examples = build_pretraining_examples(
+        store,
+        split="train",
+        domains=(0,),
+        maxlen=3,
+        method=method,
+    )
+    target = next(example for example in examples[0] if example.positive_item == 2)
+
+    assert target.context_items == expected_context
+    assert method_spec(method).single_task is expected_single_task
+
+
+@pytest.mark.parametrize("method", ("single", "single_mixed"))
+def test_single_task_pretraining_methods_require_one_domain(method: str, tmp_path: Path) -> None:
+    """Catch a separate-model ablation silently becoming a five-domain shared run."""
+    from ftrec.training.pretrain import PretrainSettings
+
+    with pytest.raises(ValueError, match="requires domain"):
+        PretrainSettings(method=method, output_dir=tmp_path)
+
+
+@pytest.mark.parametrize("method", ("joint", "joint_domain", "pcgrad"))
+def test_shared_pretraining_methods_reject_one_domain(method: str, tmp_path: Path) -> None:
+    """Catch a shared-model ablation accidentally accepting single-domain scope."""
+    from ftrec.training.pretrain import PretrainSettings
+
+    with pytest.raises(ValueError, match="only valid for single-task"):
+        PretrainSettings(method=method, output_dir=tmp_path, domain=0)
+
+
 def test_auto_pretrain_steps_cover_one_balanced_dataset_pass() -> None:
     """Catch paper epochs retaining the old arbitrary 1,000-step definition."""
     from ftrec.training.pretrain import resolve_pretrain_steps_per_epoch
@@ -255,6 +316,50 @@ def test_joint_and_pcgrad_observe_same_losses_and_raw_cosines() -> None:
         rtol=0,
         atol=0,
     )
+
+
+def test_joint_domain_uses_the_unprojected_joint_optimizer_update() -> None:
+    """Catch the context ablation accidentally introducing another optimizer."""
+    from ftrec.data.sampling import BalancedBatchManifest
+    from ftrec.training.engine import OptimizerSettings, build_optimizers
+    from ftrec.training.pretrain import run_multitask_step
+
+    examples = _examples_by_domain()
+    catalogs = {
+        domain: tuple(range(domain * 5 + 1, domain * 5 + 6))
+        for domain in range(5)
+    }
+    batches = BalancedBatchManifest.create(
+        examples, batch_size=1, steps=1, seed=42
+    ).steps[0]
+    joint = _model()
+    joint_domain = copy.deepcopy(joint)
+
+    run_multitask_step(
+        joint,
+        examples,
+        catalogs,
+        batches,
+        build_optimizers(joint, OptimizerSettings(lr=1e-3)),
+        method="joint",
+        seed=42,
+        global_step=0,
+        grad_clip_norm=5.0,
+    )
+    run_multitask_step(
+        joint_domain,
+        examples,
+        catalogs,
+        batches,
+        build_optimizers(joint_domain, OptimizerSettings(lr=1e-3)),
+        method="joint_domain",
+        seed=42,
+        global_step=0,
+        grad_clip_norm=5.0,
+    )
+
+    for name, expected in joint.state_dict().items():
+        torch.testing.assert_close(joint_domain.state_dict()[name], expected, rtol=0, atol=0)
 
 
 @pytest.mark.parametrize("method", ["joint", "pcgrad"])

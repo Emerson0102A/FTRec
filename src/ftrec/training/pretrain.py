@@ -52,6 +52,39 @@ from ftrec.training.pcgrad import (
 
 
 @dataclass(frozen=True)
+class PretrainMethodSpec:
+    single_task: bool
+    single_domain_context: bool
+    optimizer_method: str
+
+
+PRETRAIN_METHODS = (
+    "single",
+    "single_mixed",
+    "joint_domain",
+    "joint",
+    "pcgrad",
+)
+
+_METHOD_SPECS = {
+    "single": PretrainMethodSpec(True, True, "single"),
+    "single_mixed": PretrainMethodSpec(True, False, "single"),
+    "joint_domain": PretrainMethodSpec(False, True, "joint"),
+    "joint": PretrainMethodSpec(False, False, "joint"),
+    "pcgrad": PretrainMethodSpec(False, False, "pcgrad"),
+}
+
+
+def method_spec(method: str) -> PretrainMethodSpec:
+    try:
+        return _METHOD_SPECS[method]
+    except KeyError as error:
+        raise ValueError(
+            f"method must be one of: {', '.join(PRETRAIN_METHODS)}"
+        ) from error
+
+
+@dataclass(frozen=True)
 class PretrainSettings:
     method: str
     output_dir: Path
@@ -83,12 +116,11 @@ class PretrainSettings:
     progress: bool = True
 
     def __post_init__(self) -> None:
-        if self.method not in {"single", "joint", "pcgrad"}:
-            raise ValueError("method must be 'single', 'joint', or 'pcgrad'")
-        if self.method == "single" and self.domain is None:
-            raise ValueError("single-domain pretraining requires domain")
-        if self.method != "single" and self.domain is not None:
-            raise ValueError("domain is only valid for single-domain pretraining")
+        specification = method_spec(self.method)
+        if specification.single_task and self.domain is None:
+            raise ValueError("single-task pretraining requires domain")
+        if not specification.single_task and self.domain is not None:
+            raise ValueError("domain is only valid for single-task pretraining")
         if self.domain is not None and self.domain < 0:
             raise ValueError("domain must be non-negative")
         for name in ("batch_size", "epochs", "patience"):
@@ -277,8 +309,10 @@ def run_multitask_step(
     compute_cosine: bool = True,
     pcgrad_projection_scope: str = "backbone",
 ) -> MultiTaskStepResult:
-    if method not in {"joint", "pcgrad"}:
-        raise ValueError("method must be 'joint' or 'pcgrad'")
+    specification = method_spec(method)
+    if specification.single_task:
+        raise ValueError("multitask step requires a shared pretraining method")
+    optimizer_method = specification.optimizer_method
     model.train()
     optimizers.zero_grad()
     named_parameters = tuple(
@@ -320,7 +354,7 @@ def run_multitask_step(
     backbone_names = backbone_parameter_names(
         tuple(name for name, _ in named_parameters)
     )
-    if method == "pcgrad":
+    if optimizer_method == "pcgrad":
         gradients_for_step, projection_counts = project_pcgrad_with_counts(
             raw,
             seed=seed,
@@ -524,18 +558,23 @@ def record_checkpoint_gradient_profile(
     return metadata
 
 
-def _examples_for_domains(
+def build_pretraining_examples(
     store: SequenceStore,
     *,
     split: str,
     domains: Sequence[int],
     maxlen: int,
-    single_domain: bool,
+    method: str,
 ) -> dict[int, tuple[TargetExample, ...]]:
-    builder = build_single_domain_examples if single_domain else build_mixed_examples
+    specification = method_spec(method)
+    builder = (
+        build_single_domain_examples
+        if specification.single_domain_context
+        else build_mixed_examples
+    )
     result: dict[int, tuple[TargetExample, ...]] = {}
     for domain in domains:
-        keyword = "domain" if single_domain else "target_domain"
+        keyword = "domain" if specification.single_domain_context else "target_domain"
         examples = builder(store, split=split, maxlen=maxlen, **{keyword: domain})
         result[domain] = tuple(examples)
     return result
@@ -621,39 +660,39 @@ def train_pretraining(
     model_config: SASRecConfig,
     settings: PretrainSettings,
 ) -> PretrainRunResult:
-    """Train one reproducible Single, Joint, or PCGrad pretraining run."""
+    """Train one reproducible pretraining or context-ablation run."""
     seed_everything(settings.seed)
     device = resolve_device(settings.device)
+    specification = method_spec(settings.method)
     domains = (
         (int(settings.domain),)
-        if settings.method == "single"
+        if specification.single_task
         else tuple(sorted(store.items_by_domain))
     )
     if not domains:
         raise ValueError("the processed dataset has no domains")
     model = SASRec(model_config).to(device)
     initialization_hash = model_state_hash(model)
-    single_domain = settings.method == "single"
-    train_examples = _examples_for_domains(
+    train_examples = build_pretraining_examples(
         store,
         split="train",
         domains=domains,
         maxlen=model_config.maxlen,
-        single_domain=single_domain,
+        method=settings.method,
     )
-    validation_examples = _examples_for_domains(
+    validation_examples = build_pretraining_examples(
         store,
         split="valid",
         domains=domains,
         maxlen=model_config.maxlen,
-        single_domain=single_domain,
+        method=settings.method,
     )
-    test_examples = _examples_for_domains(
+    test_examples = build_pretraining_examples(
         store,
         split="test",
         domains=domains,
         maxlen=model_config.maxlen,
-        single_domain=single_domain,
+        method=settings.method,
     )
     empty = [domain for domain, examples in train_examples.items() if not examples]
     if empty:
@@ -749,7 +788,7 @@ def train_pretraining(
                 ),
             )
         gradient_logger = None
-        if settings.gradient_conflict_enabled and settings.method in {"joint", "pcgrad"}:
+        if settings.gradient_conflict_enabled and not specification.single_task:
             gradient_logger = GradientConflictLogger(
                 run.path / "gradient_conflicts.jsonl",
                 [DOMAIN_BY_ID[domain].name if domain in DOMAIN_BY_ID else str(domain) for domain in domains],
@@ -779,7 +818,7 @@ def train_pretraining(
             }
             for _ in range(steps_per_epoch):
                 batches = next(batch_steps)
-                if settings.method == "single":
+                if specification.single_task:
                     domain = domains[0]
                     lookup = example_lookup_by_domain[domain]
                     batch = tuple(lookup[index] for index in batches[domain])

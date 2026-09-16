@@ -17,7 +17,13 @@ from .recovery import RecoveryRow
 from .results import ResultRow
 
 
-COLORS = {"joint": "#4472C4", "pcgrad": "#ED7D31", "single": "#70AD47"}
+COLORS = {
+    "single": "#70AD47",
+    "single_mixed": "#A5C96A",
+    "joint_domain": "#6B9AC4",
+    "joint": "#4472C4",
+    "pcgrad": "#ED7D31",
+}
 
 
 def _save(fig: plt.Figure, root: Path, stem: str) -> tuple[Path, Path]:
@@ -38,7 +44,17 @@ def _mean(values: Sequence[float]) -> float:
 def _figure_pretraining(rows: Sequence[ResultRow]) -> plt.Figure:
     selected = [row for row in rows if row.adapt_method == "none" and row.domain != "Macro"]
     domains = sorted({row.domain for row in selected}) or ["No data"]
-    methods = [method for method in ("single", "joint", "pcgrad") if any(row.pretrain_method == method for row in selected)] or ["joint"]
+    methods = [
+        method
+        for method in (
+            "single",
+            "single_mixed",
+            "joint_domain",
+            "joint",
+            "pcgrad",
+        )
+        if any(row.pretrain_method == method for row in selected)
+    ] or ["joint"]
     fig, axis = plt.subplots(figsize=(max(6, len(domains) * 1.2), 4))
     width = 0.8 / len(methods)
     x = np.arange(len(domains))

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -67,3 +69,41 @@ def test_macro_rows_exclude_domains_without_evaluable_users() -> None:
 
     assert macro.ndcg_at_10 == pytest.approx(0.3)
     assert macro.contributing_domains == 2
+
+
+@pytest.mark.parametrize("method", ("single_mixed", "joint_domain"))
+def test_result_collection_keeps_context_ablation_labels(
+    tmp_path: Path, method: str
+) -> None:
+    """Catch analysis silently dropping a completed ablation run."""
+    from ftrec.analysis.results import collect_result_rows
+
+    run = tmp_path / method
+    run.mkdir()
+    (run / "result.json").write_text(
+        json.dumps(
+            {
+                "config_hash": "config",
+                "data_hash": "data",
+                "method": method,
+                "num_total_params": 100,
+                "num_trainable_params": 100,
+                "seed": 42,
+                "test_metrics": {
+                    "0": {
+                        "HR@10": 0.3,
+                        "NDCG@10": 0.2,
+                        "evaluation_protocol": "sampled",
+                        "num_eval_users": 10,
+                        "num_skipped_users": 0,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rows = collect_result_rows(tmp_path)
+
+    assert len(rows) == 1
+    assert rows[0].pretrain_method == method
