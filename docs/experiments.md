@@ -148,6 +148,15 @@ ftrec-adapt --config configs/experiment/lora.yaml --pretrain-method pcgrad --dom
 attention、FFN 和 full groups。LoRA checkpoint 只保存 adapter 张量和 backbone
 SHA-256。
 
+LoRA 与 FullFT 会先把尚未更新的模型作为 `epoch=0` 做一次验证，并把它纳入
+early stopping 与最佳 checkpoint 选择。若微调始终未超过初始模型，`best.pt` 会保留
+epoch 0，避免强制采用负迁移的 checkpoint。`metrics.jsonl` 的首行以
+`phase: "initial_validation"` 标识该记录；`result.json` 额外保存
+`initial_validation_metrics`、`best_validation_metrics` 和
+`best_validation_ndcg`。原有 `validation_metrics` 仍表示最后一次训练 epoch 的验证值，
+以保持旧分析脚本兼容。epoch 0 未执行 optimizer step，因此该行的 `loss` 与
+`gradient_norm` 均记为 0。
+
 分析目录包含 `results.csv`、`summary.csv`、`recovery.csv`、`warnings.json`，以及四类图的 PNG/PDF：预训练对比、LoRA rank 曲线、Recovery 曲线和梯度冲突热图。Recovery 不裁剪；分母接近零或 FullFT 低于预训练时会保留 NaN/符号并写入警告。
 
 ## 性能与进度日志

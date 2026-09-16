@@ -335,6 +335,54 @@ def train_adaptation(
                     optimizer_state=optimizers.state_dict(),
                 )
 
+        initial_validation = _evaluate(
+            model,
+            validation_examples,
+            store,
+            settings,
+            seed_offset=10_000,
+            sampled_candidates=validation_candidates,
+        )
+        initial_metric = _metric_value(initial_validation)
+        stopping.update(0, initial_metric)
+        best_validation = dict(initial_validation)
+        save_selected(run.path / "best.pt", 0)
+        with metrics_path.open("a", encoding="utf-8", newline="\n") as stream:
+            stream.write(
+                json.dumps(
+                    {
+                        "elapsed_seconds": 0.0,
+                        "epoch": 0,
+                        "eta_seconds": None,
+                        "gradient_norm": 0.0,
+                        "loss": 0.0,
+                        "phase": "initial_validation",
+                        "validation": initial_validation,
+                        "validation_ndcg": initial_metric,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    allow_nan=True,
+                )
+                + "\n"
+            )
+        print(
+            json.dumps(
+                {
+                    "domain": settings.domain,
+                    "epoch": 0,
+                    "event": "adapt_initial_validation_complete",
+                    "method": settings.method,
+                    "validation_ndcg": initial_metric,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
+
         last_epoch = 0
         training_started = time.perf_counter()
         training_progress = tqdm(
@@ -419,6 +467,7 @@ def train_adaptation(
                 flush=True,
             )
             if stopping.update(epoch, selected_metric):
+                best_validation = dict(final_validation)
                 save_selected(run.path / "best.pt", epoch)
             save_selected(run.path / "last.pt", epoch)
             training_progress.set_postfix(
@@ -454,7 +503,10 @@ def train_adaptation(
         result_payload = {
             **metadata,
             "best_epoch": stopping.best_epoch,
+            "best_validation_metrics": best_validation,
+            "best_validation_ndcg": stopping.best_metric,
             "checkpoint_path": str(Path(settings.output_dir) / "best.pt"),
+            "initial_validation_metrics": initial_validation,
             "num_total_params": num_total,
             "num_trainable_params": num_trainable,
             "pretrain_metrics": pretrain_metrics,

@@ -45,3 +45,15 @@ def test_early_stopping_selects_validation_metric_only() -> None:
     assert stopping.best_epoch == 2
     assert stopping.best_metric == 0.4
     assert not stopping.should_stop
+
+
+def test_early_stopping_registers_first_metric_even_when_nonfinite() -> None:
+    """Keep checkpoint metadata coherent when a validation split has no users."""
+    from ftrec.training.engine import EarlyStopping
+
+    stopping = EarlyStopping(patience=2)
+
+    assert stopping.update(0, float("-inf"))
+    assert stopping.best_epoch == 0
+    assert stopping.best_metric == float("-inf")
+    assert stopping.bad_epochs == 0

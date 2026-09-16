@@ -115,7 +115,7 @@ class EarlyStopping:
     should_stop: bool = False
 
     def update(self, epoch: int, metric: float) -> bool:
-        improved = metric > self.best_metric + self.min_delta
+        improved = self.best_epoch is None or metric > self.best_metric + self.min_delta
         if improved:
             self.best_metric = metric
             self.best_epoch = epoch

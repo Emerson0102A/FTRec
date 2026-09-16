@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
+import json
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -90,6 +91,12 @@ def test_adaptation_run_writes_selected_checkpoint_and_result(
     assert not (output / "test_candidates.json").exists()
     assert (output / "resolved_config.json").is_file()
     assert (output / "environment.json").is_file()
+    payload = json.loads((output / "result.json").read_text(encoding="utf-8"))
+    assert payload["best_epoch"] in (0, 1)
+    assert payload["best_validation_ndcg"] == pytest.approx(
+        payload["best_validation_metrics"]["NDCG@10"]
+    )
+    assert "initial_validation_metrics" in payload
     assert result.num_trainable_params > 0
     assert result.num_total_params >= result.num_trainable_params
     assert result.test_metrics["num_eval_users"] == 1
@@ -105,6 +112,130 @@ def test_adaptation_run_writes_selected_checkpoint_and_result(
     stderr = capsys.readouterr().err
     assert f"train {method} domain-0 seed-42" in stderr
     assert "100%" in stderr
+
+
+@pytest.mark.parametrize("method", ("lora", "fullft"))
+def test_adaptation_can_keep_epoch_zero_when_training_does_not_improve_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, method: str
+) -> None:
+    """Catch adaptation being forced to select a checkpoint worse than its base."""
+    from ftrec.training.adapt import AdaptSettings, train_adaptation
+
+    store, config, checkpoint = _fixture(tmp_path)
+    ndcg_values = iter((0.5, 0.9, 0.1, 0.5))
+
+    def controlled_evaluation(*args, **kwargs):
+        ndcg = next(ndcg_values)
+        return {
+            "HR@5": ndcg,
+            "HR@10": ndcg,
+            "NDCG@5": ndcg,
+            "NDCG@10": ndcg,
+            "evaluation_protocol": "sampled",
+            "num_eval_users": 1,
+            "num_skipped_users": 0,
+        }
+
+    monkeypatch.setattr("ftrec.training.adapt._evaluate", controlled_evaluation)
+    output = tmp_path / f"epoch-zero-{method}"
+    train_adaptation(
+        store,
+        config,
+        checkpoint,
+        AdaptSettings(
+            method=method,
+            pretrain_method="joint",
+            domain=0,
+            output_dir=output,
+            rank=2 if method == "lora" else None,
+            alpha=2 if method == "lora" else None,
+            seed=42,
+            batch_size=1,
+            steps_per_epoch=1,
+            epochs=1,
+            patience=1,
+            lr=1e-2,
+            device="cpu",
+            evaluation_protocol="sampled",
+            num_eval_negatives=1,
+            data_hash="data-a",
+            progress=False,
+        ),
+    )
+
+    payload = json.loads((output / "result.json").read_text(encoding="utf-8"))
+    assert payload["best_epoch"] == 0
+    assert payload["best_validation_ndcg"] == pytest.approx(0.9)
+    assert payload["initial_validation_metrics"]["NDCG@10"] == pytest.approx(0.9)
+    assert payload["best_validation_metrics"] == payload["initial_validation_metrics"]
+    metric_rows = [
+        json.loads(line)
+        for line in (output / "metrics.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [row["epoch"] for row in metric_rows] == [0, 1]
+    assert metric_rows[0]["phase"] == "initial_validation"
+    assert float(metric_rows[0]["loss"]) == 0.0
+    assert float(metric_rows[0]["gradient_norm"]) == 0.0
+
+    best = torch.load(output / "best.pt", map_location="cpu", weights_only=False)
+    assert best["training_state"]["epoch"] == 0
+
+
+@pytest.mark.parametrize("method", ("lora", "fullft"))
+def test_adaptation_replaces_epoch_zero_when_training_improves_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, method: str
+) -> None:
+    """Catch the epoch-zero safeguard preventing a genuinely better update."""
+    from ftrec.training.adapt import AdaptSettings, train_adaptation
+
+    store, config, checkpoint = _fixture(tmp_path)
+    ndcg_values = iter((0.5, 0.1, 0.9, 0.5))
+
+    def controlled_evaluation(*args, **kwargs):
+        ndcg = next(ndcg_values)
+        return {
+            "HR@5": ndcg,
+            "HR@10": ndcg,
+            "NDCG@5": ndcg,
+            "NDCG@10": ndcg,
+            "evaluation_protocol": "sampled",
+            "num_eval_users": 1,
+            "num_skipped_users": 0,
+        }
+
+    monkeypatch.setattr("ftrec.training.adapt._evaluate", controlled_evaluation)
+    output = tmp_path / f"trained-best-{method}"
+    train_adaptation(
+        store,
+        config,
+        checkpoint,
+        AdaptSettings(
+            method=method,
+            pretrain_method="joint",
+            domain=0,
+            output_dir=output,
+            rank=2 if method == "lora" else None,
+            alpha=2 if method == "lora" else None,
+            seed=42,
+            batch_size=1,
+            steps_per_epoch=1,
+            epochs=1,
+            patience=1,
+            lr=1e-2,
+            device="cpu",
+            evaluation_protocol="sampled",
+            num_eval_negatives=1,
+            data_hash="data-a",
+            progress=False,
+        ),
+    )
+
+    payload = json.loads((output / "result.json").read_text(encoding="utf-8"))
+    assert payload["best_epoch"] == 1
+    assert payload["best_validation_ndcg"] == pytest.approx(0.9)
+    assert payload["best_validation_metrics"]["NDCG@10"] == pytest.approx(0.9)
+    best = torch.load(output / "best.pt", map_location="cpu", weights_only=False)
+    assert best["training_state"]["epoch"] == 1
 
 
 def test_adaptation_rejects_pretrain_method_mismatch(tmp_path: Path) -> None:
