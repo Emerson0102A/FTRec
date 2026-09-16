@@ -16,6 +16,7 @@ from tqdm.auto import tqdm
 
 from ftrec.artifacts import RunDirectory
 from ftrec.config import canonical_hash, canonical_json
+from ftrec.data.amazon import DOMAIN_BY_ID
 from ftrec.data.datasets import (
     SequenceStore,
     TargetExample,
@@ -113,6 +114,21 @@ class PretrainRunResult:
     initialization_hash: str
     validation_metrics: dict[int, dict[str, float | int | str]]
     test_metrics: dict[int, dict[str, float | int | str]]
+
+
+def _domain_name(domain: int) -> str:
+    specification = DOMAIN_BY_ID.get(domain)
+    return specification.name if specification is not None else str(domain)
+
+
+def _domain_names(domains: Sequence[int]) -> dict[int, str]:
+    return {domain: _domain_name(domain) for domain in domains}
+
+
+def _metrics_by_domain_name(
+    metrics: Mapping[int, dict[str, float | int | str]],
+) -> dict[str, dict[str, float | int | str]]:
+    return {_domain_name(domain): values for domain, values in metrics.items()}
 
 
 def pretrain_config_hash(
@@ -563,8 +579,6 @@ def train_pretraining(
             )
         gradient_logger = None
         if settings.gradient_conflict_enabled and settings.method in {"joint", "pcgrad"}:
-            from ftrec.data.amazon import DOMAIN_BY_ID
-
             gradient_logger = GradientConflictLogger(
                 run.path / "gradient_conflicts.jsonl",
                 [DOMAIN_BY_ID[domain].name if domain in DOMAIN_BY_ID else str(domain) for domain in domains],
@@ -652,6 +666,7 @@ def train_pretraining(
             elapsed_seconds = time.perf_counter() - training_started
             eta_seconds = elapsed_seconds / epoch * (settings.epochs - epoch)
             epoch_record = {
+                "domain_names": _domain_names(domains),
                 "elapsed_seconds": elapsed_seconds,
                 "epoch": epoch,
                 "eta_seconds": eta_seconds,
@@ -661,7 +676,12 @@ def train_pretraining(
                     domain: sum(values) / len(values)
                     for domain, values in domain_loss_values.items()
                 },
+                "domain_losses_by_name": {
+                    _domain_name(domain): sum(values) / len(values)
+                    for domain, values in domain_loss_values.items()
+                },
                 "validation": final_validation,
+                "validation_by_name": _metrics_by_domain_name(final_validation),
                 "validation_macro_ndcg": validation_ndcg,
             }
             with metrics_path.open("a", encoding="utf-8", newline="\n") as stream:
@@ -748,13 +768,16 @@ def train_pretraining(
             "checkpoint_path": str(Path(settings.output_dir) / "best.pt"),
             "config_hash": config_hash,
             "data_hash": settings.data_hash,
+            "domain_names": _domain_names(domains),
             "initialization_hash": initialization_hash,
             "method": settings.method,
             "num_total_params": num_total,
             "num_trainable_params": num_trainable,
             "seed": settings.seed,
             "test_metrics": final_test,
+            "test_metrics_by_name": _metrics_by_domain_name(final_test),
             "validation_metrics": final_validation,
+            "validation_metrics_by_name": _metrics_by_domain_name(final_validation),
         }
         run.write_json("result.json", result_payload)
         run.complete(

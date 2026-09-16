@@ -60,6 +60,37 @@ ftrec-analyze --runs-root runs --output-dir results/pilot-seed-42
 pilot 只用于筛选研究方向，不能替代多 seed 正式结论。需要复核随机稳定性时，
 再执行下面的完整矩阵。
 
+## 从 pilot 切换到正式 seed 42
+
+正式训练前先保留整个 pilot 目录，再让新的 100-epoch checkpoint 使用默认的
+`runs/` 路径。这样后续 LoRA/FullFT 会自动读取正式 checkpoint，而不会把 pilot
+与正式结果混在一起：
+
+```bash
+PILOT_ARCHIVE="runs-pilot-seed-42-$(date +%Y%m%d-%H%M%S)" &&
+test ! -e "$PILOT_ARCHIVE" &&
+mv -- runs "$PILOT_ARCHIVE" &&
+mkdir -p runs logs &&
+printf 'pilot archived at %s\n' "$PILOT_ARCHIVE"
+```
+
+Joint 和 PCGrad 的正式配置均为最多 100 epoch、`steps_per_epoch: auto`、按验证集
+macro NDCG@10 早停（patience 10）。不要通过 `run_pilot.sh` 启动正式训练，因为
+pilot runner 会显式覆盖 epoch 和 step 数。可在两个 tmux 会话中分别执行：
+
+```bash
+ftrec-pretrain --config configs/experiment/joint.yaml --seed 42 \
+  2>&1 | tee logs/joint-seed-42.log
+
+ftrec-pretrain --config configs/experiment/pcgrad.yaml --seed 42 \
+  2>&1 | tee logs/pcgrad-seed-42.log
+```
+
+每轮训练的 `metrics.jsonl` 同时保留数字域字段，并额外提供 `domain_names`、
+`domain_losses_by_name` 和 `validation_by_name`。最终 `result.json` 额外提供
+`test_metrics_by_name` 与 `validation_metrics_by_name`，方便直接按 Health、Clothing、
+Beauty、Grocery、Sports 阅读；数字域字段继续保留，以兼容已有分析代码。
+
 先查看计划，不写 checkpoint：
 
 ```bash

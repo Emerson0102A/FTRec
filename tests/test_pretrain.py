@@ -284,7 +284,60 @@ def test_joint_pretraining_run_writes_checkpoints_metrics_and_gradients(
     epoch = __import__("json").loads(
         (output / "metrics.jsonl").read_text(encoding="utf-8").splitlines()[0]
     )
+    assert epoch["domain_names"] == {
+        "0": "Health",
+        "1": "Clothing",
+        "2": "Beauty",
+        "3": "Grocery",
+        "4": "Sports",
+    }
     assert set(epoch["domain_losses"]) == {"0", "1", "2", "3", "4"}
+    assert set(epoch["domain_losses_by_name"]) == {
+        "Health",
+        "Clothing",
+        "Beauty",
+        "Grocery",
+        "Sports",
+    }
+    assert set(epoch["validation_by_name"]) == {
+        "Health",
+        "Clothing",
+        "Beauty",
+        "Grocery",
+        "Sports",
+    }
+    for domain_id, domain_name in epoch["domain_names"].items():
+        assert epoch["domain_losses_by_name"][domain_name] == epoch["domain_losses"][
+            domain_id
+        ]
+        assert epoch["validation_by_name"][domain_name] == epoch["validation"][
+            domain_id
+        ]
+    result_payload = __import__("json").loads(
+        (output / "result.json").read_text(encoding="utf-8")
+    )
+    assert result_payload["domain_names"] == epoch["domain_names"]
+    assert set(result_payload["test_metrics_by_name"]) == {
+        "Health",
+        "Clothing",
+        "Beauty",
+        "Grocery",
+        "Sports",
+    }
+    assert set(result_payload["validation_metrics_by_name"]) == {
+        "Health",
+        "Clothing",
+        "Beauty",
+        "Grocery",
+        "Sports",
+    }
+    for domain_id, domain_name in result_payload["domain_names"].items():
+        assert result_payload["test_metrics_by_name"][domain_name] == result_payload[
+            "test_metrics"
+        ][domain_id]
+        assert result_payload["validation_metrics_by_name"][domain_name] == result_payload[
+            "validation_metrics"
+        ][domain_id]
     assert len(result.test_metrics) == 5
     stderr = capsys.readouterr().err
     assert "train joint seed-42" in stderr
