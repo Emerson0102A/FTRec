@@ -57,6 +57,21 @@ def test_qv_lora_parameter_count_is_exact_and_monotonic() -> None:
     assert counts == sorted(counts)
 
 
+def test_lora_parameters_inherit_base_projection_device_and_dtype() -> None:
+    """Catch adapters being created on CPU/float32 after a model moved to CUDA/bf16."""
+    from torch import nn
+
+    from ftrec.models.lora import LoRALinear
+
+    base = nn.Linear(4, 4, device="meta", dtype=torch.float64)
+    adapted = LoRALinear(base, rank=2, alpha=2)
+
+    assert adapted.lora_A.device == base.weight.device
+    assert adapted.lora_B.device == base.weight.device
+    assert adapted.lora_A.dtype == base.weight.dtype
+    assert adapted.lora_B.dtype == base.weight.dtype
+
+
 def test_lora_step_changes_adapter_but_preserves_every_base_tensor() -> None:
     from ftrec.models.lora import inject_qv_lora
 
