@@ -21,7 +21,9 @@ CLI_MODULES = (
 )
 
 
-@pytest.mark.parametrize("method", ("single_mixed", "joint_domain"))
+@pytest.mark.parametrize(
+    "method", ("single_mixed", "joint_domain", "joint_mixed_matched")
+)
 def test_pretrain_cli_accepts_context_ablation_methods(method: str) -> None:
     """Catch the new experiment modes being implemented but unreachable on servers."""
     from ftrec.cli.pretrain import build_parser
@@ -91,6 +93,7 @@ def test_server_scripts_are_fail_fast_and_stage_scoped() -> None:
         "run_single.sh",
         "run_single_mixed.sh",
         "run_joint_domain.sh",
+        "run_joint_mixed_matched.sh",
         "run_joint.sh",
         "run_pcgrad.sh",
         "run_lora.sh",
@@ -111,6 +114,7 @@ def test_production_training_configs_enable_bf16() -> None:
         "single.yaml",
         "single_mixed.yaml",
         "joint_domain.yaml",
+        "joint_mixed_matched.yaml",
         "joint.yaml",
         "pcgrad.yaml",
         "lora.yaml",
@@ -130,20 +134,50 @@ def test_context_ablation_configs_match_formal_training_protocol() -> None:
     joint_domain = yaml.safe_load(
         (root / "joint_domain.yaml").read_text(encoding="utf-8")
     )
+    joint_mixed_matched = yaml.safe_load(
+        (root / "joint_mixed_matched.yaml").read_text(encoding="utf-8")
+    )
 
     assert single_mixed["method"] == "single_mixed"
     assert single_mixed["domain"] == 0
     assert joint_domain["method"] == "joint_domain"
     assert joint_domain["domain"] is None
-    for config in (single_mixed, joint_domain):
+    assert joint_mixed_matched["method"] == "joint_mixed_matched"
+    assert joint_mixed_matched["domain"] is None
+    for config in (single_mixed, joint_domain, joint_mixed_matched):
+        assert config["processed_dir"] == "data/processed/gmflowrec-amazon"
+        assert config["device"] == "cuda"
+        assert config["bf16"] is True
         assert config["epochs"] == 100
         assert config["patience"] == 10
         assert config["steps_per_epoch"] == "auto"
         assert config["lr"] == pytest.approx(0.001)
         assert config["embedding_lr"] == pytest.approx(0.001)
         assert config["evaluation_protocol"] == "sampled"
+        assert config["evaluation_chunk_size"] == 4096
+        assert config["evaluation_batch_size"] == 256
         assert config["num_eval_negatives"] == 999
         assert config["gradient_conflict"]["enabled"] is False
+
+
+def test_context_ablation_scripts_encode_the_expected_run_matrix() -> None:
+    root = Path(__file__).parents[1] / "scripts"
+    single_mixed = (root / "run_single_mixed.sh").read_text(encoding="utf-8")
+    joint_domain = (root / "run_joint_domain.sh").read_text(encoding="utf-8")
+    joint_mixed = (root / "run_joint_mixed_matched.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "for domain in 0 1 2 3 4" in single_mixed
+    assert '--domain "$domain"' in single_mixed
+    assert single_mixed.count("ftrec-pretrain") == 1
+    for script in (joint_domain, joint_mixed):
+        assert "for domain in" not in script
+        assert script.count("ftrec-pretrain") == 1
+    for script in (single_mixed, joint_domain, joint_mixed):
+        assert "--seed" in script
+        assert 'extra_args+=("$1")' in script
+        assert '"${extra_args[@]}"' in script
 
 
 def test_adaptation_dry_run_reports_matrix_progress(tmp_path: Path) -> None:

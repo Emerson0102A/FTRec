@@ -301,6 +301,7 @@ def collect_result_rows(root: str | Path) -> tuple[ResultRow, ...]:
             "single",
             "single_mixed",
             "joint_domain",
+            "joint_mixed_matched",
             "joint",
             "pcgrad",
         }:

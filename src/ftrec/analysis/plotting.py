@@ -21,6 +21,7 @@ COLORS = {
     "single": "#70AD47",
     "single_mixed": "#A5C96A",
     "joint_domain": "#6B9AC4",
+    "joint_mixed_matched": "#8064A2",
     "joint": "#4472C4",
     "pcgrad": "#ED7D31",
 }
@@ -50,6 +51,7 @@ def _figure_pretraining(rows: Sequence[ResultRow]) -> plt.Figure:
             "single",
             "single_mixed",
             "joint_domain",
+            "joint_mixed_matched",
             "joint",
             "pcgrad",
         )

@@ -55,6 +55,7 @@ from ftrec.training.pcgrad import (
 class PretrainMethodSpec:
     single_task: bool
     single_domain_context: bool
+    matched_domain_history_cohort: bool
     optimizer_method: str
 
 
@@ -62,16 +63,18 @@ PRETRAIN_METHODS = (
     "single",
     "single_mixed",
     "joint_domain",
+    "joint_mixed_matched",
     "joint",
     "pcgrad",
 )
 
 _METHOD_SPECS = {
-    "single": PretrainMethodSpec(True, True, "single"),
-    "single_mixed": PretrainMethodSpec(True, False, "single"),
-    "joint_domain": PretrainMethodSpec(False, True, "joint"),
-    "joint": PretrainMethodSpec(False, False, "joint"),
-    "pcgrad": PretrainMethodSpec(False, False, "pcgrad"),
+    "single": PretrainMethodSpec(True, True, True, "single"),
+    "single_mixed": PretrainMethodSpec(True, False, True, "single"),
+    "joint_domain": PretrainMethodSpec(False, True, True, "joint"),
+    "joint_mixed_matched": PretrainMethodSpec(False, False, True, "joint"),
+    "joint": PretrainMethodSpec(False, False, False, "joint"),
+    "pcgrad": PretrainMethodSpec(False, False, False, "pcgrad"),
 }
 
 
@@ -574,8 +577,18 @@ def build_pretraining_examples(
     )
     result: dict[int, tuple[TargetExample, ...]] = {}
     for domain in domains:
-        keyword = "domain" if specification.single_domain_context else "target_domain"
-        examples = builder(store, split=split, maxlen=maxlen, **{keyword: domain})
+        if specification.single_domain_context:
+            examples = builder(store, split=split, maxlen=maxlen, domain=domain)
+        else:
+            examples = builder(
+                store,
+                split=split,
+                maxlen=maxlen,
+                target_domain=domain,
+                require_target_domain_history=(
+                    specification.matched_domain_history_cohort
+                ),
+            )
         result[domain] = tuple(examples)
     return result
 

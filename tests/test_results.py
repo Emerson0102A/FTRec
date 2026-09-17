@@ -71,7 +71,9 @@ def test_macro_rows_exclude_domains_without_evaluable_users() -> None:
     assert macro.contributing_domains == 2
 
 
-@pytest.mark.parametrize("method", ("single_mixed", "joint_domain"))
+@pytest.mark.parametrize(
+    "method", ("single_mixed", "joint_domain", "joint_mixed_matched")
+)
 def test_result_collection_keeps_context_ablation_labels(
     tmp_path: Path, method: str
 ) -> None:

@@ -164,34 +164,45 @@ Single 明显优于 Joint 时，差距可能来自两种不同机制：五域共
 输入序列混入其他域的历史行为。以下四种模式只改变这两个因素，不修改 SASRec
 结构、学习率、balanced batch、固定候选集或 early stopping：
 
-| method | 模型参数 | 输入上下文 | 运行数（单 seed） |
-| --- | --- | --- | ---: |
-| `single` | 每域独立 | 仅目标域 | 5 |
-| `single_mixed` | 每域独立 | 五域混合 | 5 |
-| `joint_domain` | 五域共享 | 仅目标域 | 1 |
-| `joint` | 五域共享 | 五域混合 | 1 |
+为了避免把 cohort 差异误认为上下文收益，受控四格都只保留“目标域中至少已有一次
+历史行为”的 target。原始 `joint` 会额外包含只有跨域历史的 target，因此保留为外部
+参考，但不直接代替 matched 四格中的共享+混合模型：
 
-已有 `single` 和 `joint` 结果无需重跑。补 seed 42 的另外两个格子前可先检查计划：
+| method | 模型参数 | 输入上下文 | target cohort | 运行数（单 seed） |
+| --- | --- | --- | --- | ---: |
+| `single` | 每域独立 | 仅目标域 | matched | 5（已有） |
+| `single_mixed` | 每域独立 | 五域混合 | matched | 5 |
+| `joint_domain` | 五域共享 | 仅目标域 | matched | 1 |
+| `joint_mixed_matched` | 五域共享 | 五域混合 | matched | 1 |
+| `joint` | 五域共享 | 五域混合 | 全部可评估 target | 1（已有，仅参考） |
+
+已有 `single` 结果可直接作为受控四格的一角，`joint` 结果保留为全 cohort 参考，
+二者都无需重跑。补 seed 42 的另外三个受控模式前可先检查计划：
 
 ```bash
 bash scripts/run_single_mixed.sh --seed 42 --dry-run
 bash scripts/run_joint_domain.sh --seed 42 --dry-run
+bash scripts/run_joint_mixed_matched.sh --seed 42 --dry-run
 ```
 
-确认后建议分别放入两个 tmux 会话；同一张 GPU 上并发是否缩短总墙钟时间取决于
-GPU 利用率和显存，先观察 `nvidia-smi`，若吞吐下降明显就顺序运行：
+确认后可放入 tmux 会话；同一张 GPU 上最多先尝试两个进程并发，是否缩短总墙钟
+时间取决于 GPU 利用率和显存。先观察 `nvidia-smi`，若吞吐下降明显就顺序运行：
 
 ```bash
 mkdir -p logs
 bash scripts/run_single_mixed.sh --seed 42 2>&1 | tee logs/single-mixed-seed-42.log
 
 bash scripts/run_joint_domain.sh --seed 42 2>&1 | tee logs/joint-domain-seed-42.log
+
+bash scripts/run_joint_mixed_matched.sh --seed 42 \
+  2>&1 | tee logs/joint-mixed-matched-seed-42.log
 ```
 
-`single_mixed` 依次训练五个独立模型；`joint_domain` 训练一个五域 balanced-batch
-共享模型。两个配置均为最多 100 epoch、patience 10、学习率和 embedding 学习率
-0.001，并复用作者预生成的 999 个负样本。冲突日志对这两个纯消融关闭，以免增加
-额外开销；这不会改变 optimizer update。
+`single_mixed` 依次训练五个独立模型；`joint_domain` 和
+`joint_mixed_matched` 各训练一个五域 balanced-batch 共享模型，共新增 7 个 run。
+三个配置均为最多 100 epoch、patience 10、学习率和 embedding 学习率 0.001，并
+从作者预生成的固定候选矩阵中选择 matched 用户对应的 999 个负样本。冲突日志对
+这些纯消融关闭，以免增加额外开销；这不会改变 optimizer update。
 
 完成后重新汇总已有全部结果：
 
@@ -204,8 +215,11 @@ ftrec-analyze \
 
 重点比较两组受控差值：
 
-- 上下文干扰：`single_mixed - single`，以及 `joint - joint_domain`；
-- 参数共享影响：`joint_domain - single`，以及 `joint - single_mixed`。
+- 上下文干扰：`single_mixed - single`，以及
+  `joint_mixed_matched - joint_domain`；
+- 参数共享影响：`joint_domain - single`，以及
+  `joint_mixed_matched - single_mixed`；
+- cohort 扩展效应（仅辅助解释）：`joint - joint_mixed_matched`。
 
 若前两项明显为负，主要问题是混合序列上下文；若后两项明显为负，主要问题是共享
 参数造成的负迁移；两类差值都明显为负则说明两种机制同时存在。先用 seed 42 判断

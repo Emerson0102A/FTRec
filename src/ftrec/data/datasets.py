@@ -203,6 +203,7 @@ def _build_examples(
     target_domain: int,
     maxlen: int,
     single_domain: bool,
+    require_target_domain_history: bool = False,
 ) -> list[TargetExample]:
     if maxlen < 1:
         raise ValueError("maxlen must be positive")
@@ -215,6 +216,13 @@ def _build_examples(
             zip(record.domain_ids, record.splits, strict=True)
         ):
             if domain != target_domain or row_split != split:
+                continue
+            has_target_domain_history = any(
+                prior_domain == target_domain
+                for prior_domain in record.domain_ids[:index]
+            )
+            if require_target_domain_history and not has_target_domain_history:
+                skipped += 1
                 continue
             if single_domain:
                 prior = [
@@ -252,7 +260,12 @@ def _build_examples(
 
 
 def build_mixed_examples(
-    store: SequenceStore, *, split: str, target_domain: int, maxlen: int
+    store: SequenceStore,
+    *,
+    split: str,
+    target_domain: int,
+    maxlen: int,
+    require_target_domain_history: bool = False,
 ) -> list[TargetExample]:
     return _build_examples(
         store,
@@ -260,6 +273,7 @@ def build_mixed_examples(
         target_domain=target_domain,
         maxlen=maxlen,
         single_domain=False,
+        require_target_domain_history=require_target_domain_history,
     )
 
 
@@ -272,4 +286,5 @@ def build_single_domain_examples(
         target_domain=domain,
         maxlen=maxlen,
         single_domain=True,
+        require_target_domain_history=True,
     )

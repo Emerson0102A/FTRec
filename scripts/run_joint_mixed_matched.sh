@@ -22,10 +22,7 @@ while (($#)); do
   esac
 done
 
-for domain in 0 1 2 3 4; do
-  ftrec-pretrain \
-    --config configs/experiment/single_mixed.yaml \
-    --seed "$seed" \
-    --domain "$domain" \
-    "${extra_args[@]}"
-done
+ftrec-pretrain \
+  --config configs/experiment/joint_mixed_matched.yaml \
+  --seed "$seed" \
+  "${extra_args[@]}"

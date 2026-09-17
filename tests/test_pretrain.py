@@ -13,6 +13,7 @@ import pytest
         ("single", (0, 0, 1), True),
         ("single_mixed", (0, 101, 1), True),
         ("joint_domain", (0, 0, 1), False),
+        ("joint_mixed_matched", (0, 101, 1), False),
         ("joint", (0, 101, 1), False),
         ("pcgrad", (0, 101, 1), False),
     ],
@@ -59,13 +60,65 @@ def test_single_task_pretraining_methods_require_one_domain(method: str, tmp_pat
         PretrainSettings(method=method, output_dir=tmp_path)
 
 
-@pytest.mark.parametrize("method", ("joint", "joint_domain", "pcgrad"))
+@pytest.mark.parametrize(
+    "method", ("joint", "joint_domain", "joint_mixed_matched", "pcgrad")
+)
 def test_shared_pretraining_methods_reject_one_domain(method: str, tmp_path: Path) -> None:
     """Catch a shared-model ablation accidentally accepting single-domain scope."""
     from ftrec.training.pretrain import PretrainSettings
 
     with pytest.raises(ValueError, match="only valid for single-task"):
         PretrainSettings(method=method, output_dir=tmp_path, domain=0)
+
+
+def test_context_ablation_uses_one_common_target_cohort() -> None:
+    """Keep context and sharing effects separate from target eligibility."""
+    from ftrec.data.datasets import SequenceRecord, SequenceStore
+    from ftrec.training.pretrain import build_pretraining_examples
+
+    store = SequenceStore(
+        (
+            SequenceRecord(
+                user_id=1,
+                item_ids=(101, 1),
+                domain_ids=(1, 0),
+                timestamps=(1, 2),
+                splits=("train", "train"),
+            ),
+            SequenceRecord(
+                user_id=2,
+                item_ids=(2, 102, 3),
+                domain_ids=(0, 1, 0),
+                timestamps=(1, 2, 3),
+                splits=("train", "train", "train"),
+            ),
+        ),
+        {0: (1, 2, 3), 1: (101, 102)},
+    )
+
+    def keys(method: str) -> tuple[tuple[int, int], ...]:
+        examples = build_pretraining_examples(
+            store,
+            split="train",
+            domains=(0,),
+            maxlen=3,
+            method=method,
+        )[0]
+        return tuple((example.user_id, example.positive_item) for example in examples)
+
+    aligned = {
+        method: keys(method)
+        for method in (
+            "single",
+            "single_mixed",
+            "joint_domain",
+            "joint_mixed_matched",
+        )
+    }
+
+    assert set(aligned.values()) == {((2, 3),)}
+    assert keys("joint") == ((1, 1), (2, 3))
+    assert keys("pcgrad") == keys("joint")
 
 
 def test_auto_pretrain_steps_cover_one_balanced_dataset_pass() -> None:

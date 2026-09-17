@@ -71,10 +71,24 @@ def test_pretraining_figure_includes_context_ablation_methods() -> None:
             "config",
             "data",
         )
-        for method in ("single", "single_mixed", "joint_domain", "joint", "pcgrad")
+        for method in (
+            "single",
+            "single_mixed",
+            "joint_domain",
+            "joint_mixed_matched",
+            "joint",
+            "pcgrad",
+        )
     )
 
     figure = _figure_pretraining(rows)
     labels = figure.axes[0].get_legend_handles_labels()[1]
 
-    assert labels == ["single", "single_mixed", "joint_domain", "joint", "pcgrad"]
+    assert labels == [
+        "single",
+        "single_mixed",
+        "joint_domain",
+        "joint_mixed_matched",
+        "joint",
+        "pcgrad",
+    ]
