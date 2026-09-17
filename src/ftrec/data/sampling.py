@@ -232,6 +232,122 @@ class BalancedBatchPlan:
         Path(path).write_text(payload + "\n", encoding="utf-8", newline="\n")
 
 
+def _proportional_batch_sizes(
+    example_counts: Mapping[int, int], total_batch_size: int
+) -> dict[int, int]:
+    """Allocate a fixed batch with Hamilton's largest-remainder method."""
+    counts = {int(domain): int(count) for domain, count in sorted(example_counts.items())}
+    if not counts or any(count < 1 for count in counts.values()):
+        raise ValueError("all domains must have training examples")
+    if total_batch_size < len(counts):
+        raise ValueError("total_batch_size must be at least the number of domains")
+    total_examples = sum(counts.values())
+    exact = {
+        domain: total_batch_size * count / total_examples
+        for domain, count in counts.items()
+    }
+    allocated = {domain: max(1, int(value)) for domain, value in exact.items()}
+    while sum(allocated.values()) < total_batch_size:
+        domain = max(
+            allocated,
+            key=lambda value: (exact[value] - allocated[value], -value),
+        )
+        allocated[domain] += 1
+    while sum(allocated.values()) > total_batch_size:
+        candidates = [domain for domain, value in allocated.items() if value > 1]
+        if not candidates:
+            raise ValueError("cannot allocate a positive batch to every domain")
+        domain = max(
+            candidates,
+            key=lambda value: (allocated[value] - exact[value], value),
+        )
+        allocated[domain] -= 1
+    return allocated
+
+
+@dataclass(frozen=True)
+class ProportionalBatchPlan:
+    """Deterministic per-domain batches weighted by training-example counts."""
+
+    seed: int
+    total_batch_size: int
+    total_steps: int
+    example_ids_by_domain: dict[int, tuple[int, ...]]
+    batch_sizes_by_domain: dict[int, int]
+
+    @classmethod
+    def create(
+        cls,
+        examples_by_domain: Mapping[int, Sequence[TargetExample]],
+        *,
+        total_batch_size: int,
+        total_steps: int,
+        seed: int,
+    ) -> "ProportionalBatchPlan":
+        if total_steps < 1:
+            raise ValueError("total_steps must be positive")
+        identifiers = {
+            int(domain): tuple(example.example_id for example in examples)
+            for domain, examples in sorted(examples_by_domain.items())
+        }
+        sizes = _proportional_batch_sizes(
+            {domain: len(values) for domain, values in identifiers.items()},
+            total_batch_size,
+        )
+        return cls(seed, total_batch_size, total_steps, identifiers, sizes)
+
+    def iter_steps(self, *, limit: int | None = None):
+        count = self.total_steps if limit is None else min(limit, self.total_steps)
+        states: dict[int, tuple[list[int], int, random.Random]] = {}
+        for domain, values in sorted(self.example_ids_by_domain.items()):
+            ids = list(values)
+            generator = random.Random(self.seed * 1009 + domain)
+            generator.shuffle(ids)
+            states[domain] = (ids, 0, generator)
+        for _ in range(count):
+            step: dict[int, tuple[int, ...]] = {}
+            for domain in sorted(states):
+                ids, cursor, generator = states[domain]
+                selected: list[int] = []
+                while len(selected) < self.batch_sizes_by_domain[domain]:
+                    if cursor >= len(ids):
+                        generator.shuffle(ids)
+                        cursor = 0
+                    selected.append(ids[cursor])
+                    cursor += 1
+                states[domain] = (ids, cursor, generator)
+                step[domain] = tuple(selected)
+            yield step
+
+    def to_dict(self) -> dict[str, object]:
+        domains = {}
+        for domain, ids in sorted(self.example_ids_by_domain.items()):
+            digest = hashlib.sha256()
+            for start in range(0, len(ids), 10_000):
+                block = ",".join(str(value) for value in ids[start : start + 10_000])
+                digest.update(block.encode("ascii"))
+                digest.update(b",")
+            domains[str(domain)] = {
+                "batch_size": self.batch_sizes_by_domain[domain],
+                "count": len(ids),
+                "sha256": digest.hexdigest(),
+            }
+        return {
+            "algorithm": "proportional-shuffle-cycle-v1",
+            "domains": domains,
+            "seed": self.seed,
+            "total_batch_size": self.total_batch_size,
+            "total_steps": self.total_steps,
+            "version": 1,
+        }
+
+    def write(self, path: str | Path) -> None:
+        payload = json.dumps(
+            self.to_dict(), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        Path(path).write_text(payload + "\n", encoding="utf-8", newline="\n")
+
+
 @dataclass(frozen=True)
 class BalancedBatchManifest:
     seed: int

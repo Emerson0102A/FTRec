@@ -22,7 +22,7 @@ CLI_MODULES = (
 
 
 @pytest.mark.parametrize(
-    "method", ("single_mixed", "joint_domain", "joint_mixed_matched")
+    "method", ("single_mixed", "joint_domain", "joint_mixed_matched", "joint_proportional")
 )
 def test_pretrain_cli_accepts_context_ablation_methods(method: str) -> None:
     """Catch the new experiment modes being implemented but unreachable on servers."""
@@ -94,6 +94,7 @@ def test_server_scripts_are_fail_fast_and_stage_scoped() -> None:
         "run_single_mixed.sh",
         "run_joint_domain.sh",
         "run_joint_mixed_matched.sh",
+        "run_joint_proportional.sh",
         "run_joint.sh",
         "run_pcgrad.sh",
         "run_lora.sh",
@@ -115,6 +116,7 @@ def test_production_training_configs_enable_bf16() -> None:
         "single_mixed.yaml",
         "joint_domain.yaml",
         "joint_mixed_matched.yaml",
+        "joint_proportional.yaml",
         "joint.yaml",
         "pcgrad.yaml",
         "lora.yaml",
@@ -158,6 +160,21 @@ def test_context_ablation_configs_match_formal_training_protocol() -> None:
         assert config["evaluation_batch_size"] == 256
         assert config["num_eval_negatives"] == 999
         assert config["gradient_conflict"]["enabled"] is False
+
+
+def test_joint_proportional_config_is_the_lr1e4_control() -> None:
+    root = Path(__file__).parents[1] / "configs" / "experiment"
+    config = yaml.safe_load(
+        (root / "joint_proportional.yaml").read_text(encoding="utf-8")
+    )
+
+    assert config["method"] == "joint_proportional"
+    assert config["output_root"] == "runs-lr1e-4"
+    assert config["batch_size"] == 256
+    assert config["steps_per_epoch"] == "auto"
+    assert config["lr"] == pytest.approx(0.0001)
+    assert config["embedding_lr"] == pytest.approx(0.0001)
+    assert config["gradient_conflict"]["enabled"] is False
 
 
 def test_context_ablation_scripts_encode_the_expected_run_matrix() -> None:

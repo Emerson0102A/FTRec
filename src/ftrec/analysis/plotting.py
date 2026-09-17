@@ -23,6 +23,7 @@ COLORS = {
     "joint_domain": "#6B9AC4",
     "joint_mixed_matched": "#8064A2",
     "joint": "#4472C4",
+    "joint_proportional": "#5B9BD5",
     "pcgrad": "#ED7D31",
 }
 
@@ -53,6 +54,7 @@ def _figure_pretraining(rows: Sequence[ResultRow]) -> plt.Figure:
             "joint_domain",
             "joint_mixed_matched",
             "joint",
+            "joint_proportional",
             "pcgrad",
         )
         if any(row.pretrain_method == method for row in selected)

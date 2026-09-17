@@ -79,6 +79,36 @@ def test_compact_batch_plan_is_bounded_and_replays_deterministically(tmp_path: P
     assert list(first.iter_steps(limit=4)) == list(second.iter_steps(limit=4))
 
 
+def test_proportional_batch_plan_preserves_total_batch_and_dataset_weights(
+    tmp_path: Path,
+) -> None:
+    from ftrec.data.sampling import ProportionalBatchPlan
+
+    by_domain = {
+        0: tuple(_example(index, 0, frozenset()) for index in range(5)),
+        1: tuple(_example(10 + index, 1, frozenset()) for index in range(3)),
+        2: tuple(_example(20 + index, 2, frozenset()) for index in range(2)),
+    }
+    first = ProportionalBatchPlan.create(
+        by_domain, total_batch_size=10, total_steps=4, seed=42
+    )
+    second = ProportionalBatchPlan.create(
+        by_domain, total_batch_size=10, total_steps=4, seed=42
+    )
+    path = tmp_path / "proportional.json"
+    first.write(path)
+
+    assert first.batch_sizes_by_domain == {0: 5, 1: 3, 2: 2}
+    assert list(first.iter_steps()) == list(second.iter_steps())
+    assert all(
+        {domain: len(ids) for domain, ids in step.items()} == {0: 5, 1: 3, 2: 2}
+        for step in first.iter_steps()
+    )
+    assert '"algorithm":"proportional-shuffle-cycle-v1"' in path.read_text(
+        encoding="utf-8"
+    )
+
+
 def test_rejection_sampler_handles_nearly_exhausted_catalog() -> None:
     from ftrec.data.sampling import SameDomainNegativeSampler
 

@@ -215,17 +215,28 @@ def project_pcgrad_with_counts(
 
 
 def mean_gradients(tasks: Sequence[TaskGradients]) -> TaskGradients:
+    return weighted_gradients(tasks, (1.0,) * len(tasks))
+
+
+def weighted_gradients(
+    tasks: Sequence[TaskGradients], weights: Sequence[float]
+) -> TaskGradients:
     if not tasks:
-        raise ValueError("cannot average an empty task list")
+        raise ValueError("cannot combine an empty task list")
+    if len(tasks) != len(weights):
+        raise ValueError("tasks and weights must have identical lengths")
+    if any(weight < 0 for weight in weights) or sum(weights) <= 0:
+        raise ValueError("gradient weights must be non-negative with a positive sum")
     names = tasks[0].names
     if any(task.names != names for task in tasks[1:]):
         raise ValueError("task gradients must use identical parameter ordering")
+    total_weight = float(sum(weights))
     values: list[torch.Tensor | None] = []
     for parameter_index in range(len(names)):
         total: torch.Tensor | None = None
-        for task in tasks:
-            total = _add_scaled(total, task.values[parameter_index], 1.0)
-        values.append(_scale(total, 1.0 / len(tasks)) if total is not None else None)
+        for task, weight in zip(tasks, weights, strict=True):
+            total = _add_scaled(total, task.values[parameter_index], float(weight))
+        values.append(_scale(total, 1.0 / total_weight) if total is not None else None)
     return TaskGradients(names, tuple(values))
 
 

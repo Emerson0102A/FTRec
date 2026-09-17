@@ -303,6 +303,7 @@ def collect_result_rows(root: str | Path) -> tuple[ResultRow, ...]:
             "joint_domain",
             "joint_mixed_matched",
             "joint",
+            "joint_proportional",
             "pcgrad",
         }:
             metrics_by_domain = value["test_metrics"]

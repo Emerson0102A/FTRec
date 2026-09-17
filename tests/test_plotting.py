@@ -77,6 +77,7 @@ def test_pretraining_figure_includes_context_ablation_methods() -> None:
             "joint_domain",
             "joint_mixed_matched",
             "joint",
+            "joint_proportional",
             "pcgrad",
         )
     )
@@ -90,5 +91,6 @@ def test_pretraining_figure_includes_context_ablation_methods() -> None:
         "joint_domain",
         "joint_mixed_matched",
         "joint",
+        "joint_proportional",
         "pcgrad",
     ]

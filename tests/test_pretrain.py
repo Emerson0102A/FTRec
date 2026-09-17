@@ -15,6 +15,7 @@ import pytest
         ("joint_domain", (0, 0, 1), False),
         ("joint_mixed_matched", (0, 101, 1), False),
         ("joint", (0, 101, 1), False),
+        ("joint_proportional", (0, 101, 1), False),
         ("pcgrad", (0, 101, 1), False),
     ],
 )
@@ -61,7 +62,7 @@ def test_single_task_pretraining_methods_require_one_domain(method: str, tmp_pat
 
 
 @pytest.mark.parametrize(
-    "method", ("joint", "joint_domain", "joint_mixed_matched", "pcgrad")
+    "method", ("joint", "joint_domain", "joint_mixed_matched", "joint_proportional", "pcgrad")
 )
 def test_shared_pretraining_methods_reject_one_domain(method: str, tmp_path: Path) -> None:
     """Catch a shared-model ablation accidentally accepting single-domain scope."""
@@ -118,6 +119,7 @@ def test_context_ablation_uses_one_common_target_cohort() -> None:
 
     assert set(aligned.values()) == {((2, 3),)}
     assert keys("joint") == ((1, 1), (2, 3))
+    assert keys("joint_proportional") == keys("joint")
     assert keys("pcgrad") == keys("joint")
 
 
@@ -413,6 +415,40 @@ def test_joint_domain_uses_the_unprojected_joint_optimizer_update() -> None:
 
     for name, expected in joint.state_dict().items():
         torch.testing.assert_close(joint_domain.state_dict()[name], expected, rtol=0, atol=0)
+
+
+def test_joint_proportional_weights_domain_gradients_by_microbatch_size() -> None:
+    """Catch proportional batches being reduced with the balanced task mean."""
+    from ftrec.training.pcgrad import TaskGradients
+    from ftrec.training.pretrain import combine_multitask_gradients
+
+    tasks = (
+        TaskGradients(("weight",), (torch.tensor([1.0, 3.0]),)),
+        TaskGradients(("weight",), (torch.tensor([9.0, 11.0]),)),
+    )
+
+    combined = combine_multitask_gradients(
+        tasks,
+        method="joint_proportional",
+        domain_batch_sizes=(3, 1),
+    )
+
+    torch.testing.assert_close(combined.values[0], torch.tensor([3.0, 5.0]))
+
+
+def test_joint_proportional_reports_the_weighted_training_loss() -> None:
+    from ftrec.training.pretrain import combine_domain_losses
+
+    assert combine_domain_losses(
+        {0: 1.0, 1: 9.0},
+        method="joint_proportional",
+        domain_batch_sizes={0: 3, 1: 1},
+    ) == pytest.approx(3.0)
+    assert combine_domain_losses(
+        {0: 1.0, 1: 9.0},
+        method="joint",
+        domain_batch_sizes={0: 3, 1: 1},
+    ) == pytest.approx(5.0)
 
 
 @pytest.mark.parametrize("method", ["joint", "pcgrad"])

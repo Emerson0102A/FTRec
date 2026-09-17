@@ -225,6 +225,54 @@ ftrec-analyze \
 参数造成的负迁移；两类差值都明显为负则说明两种机制同时存在。先用 seed 42 判断
 效应方向，只有差值大于评测噪声后再补 43、44 等随机种子。
 
+## 自然比例 Joint 对照
+
+`joint_proportional` 用来区分共享参数带来的迁移与五域均衡重加权带来的收益。它与
+`joint` 使用相同的共享 SASRec、混合域上下文、训练 target cohort、固定评测候选集
+和 early stopping；唯一变化是训练 batch 的域构成。
+
+配置中的 `batch_size: 256` 仍表示 balanced Joint 的单域基准。每个 optimizer step
+的总 batch 固定为 `5 × 256 = 1280`，然后按各域训练样本数用 largest-remainder
+方法分配。当前 GMFlowRec-Amazon 数据对应约：
+
+```text
+Health       317
+Clothing     530
+Beauty       224
+Grocery      143
+Sports        66
+total       1280
+```
+
+各域 loss 先在域内求平均，随后按该域实际 micro-batch 大小加权合并梯度；这严格
+等价于对1280条样本的 pooled loss 求平均。`steps_per_epoch: auto` 仍为384，因此
+每轮总训练量为491,520条，和491,445条训练样本近似相等。
+
+该低学习率控制实验使用独立目录，不覆盖已有结果：
+
+```bash
+bash scripts/run_joint_proportional.sh --seed 42 \
+  2>&1 | tee joint-proportional-lr1e-4-seed42.log
+```
+
+输出位于：
+
+```text
+runs-lr1e-4/pretrain/joint_proportional/all-domains/seed-42
+```
+
+训练启动后可检查 `batch_manifest.json`。其中 `algorithm` 应为
+`proportional-shuffle-cycle-v1`，每个域同时记录 `count` 和 `batch_size`。正式比较
+前还应检查 Joint、Single 与本实验的 `resolved_config.json`，确保 `lr` 和
+`embedding_lr` 都是 `0.0001`。
+
+分析时重点报告：
+
+- 非均衡多域整体效应（参数共享与混合上下文的合计）：
+  `joint_proportional - single`；
+- 均衡重加权效应：`joint - joint_proportional`；
+- 五域等权 Macro NDCG@10，以及按测试用户数加权的总体 NDCG@10。
+
 LoRA 与 FullFT 会先把尚未更新的模型作为 `epoch=0` 做一次验证，并把它纳入
 early stopping 与最佳 checkpoint 选择。若微调始终未超过初始模型，`best.pt` 会保留
 epoch 0，避免强制采用负迁移的 checkpoint。`metrics.jsonl` 的首行以

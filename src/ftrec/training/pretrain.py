@@ -25,6 +25,7 @@ from ftrec.data.datasets import (
 )
 from ftrec.data.sampling import (
     BalancedBatchPlan,
+    ProportionalBatchPlan,
     SameDomainNegativeSampler,
     evaluation_candidate_manifest,
     resolve_evaluation_candidates,
@@ -44,10 +45,11 @@ from ftrec.training.objectives import sampled_bce_loss
 from ftrec.training.pcgrad import (
     GradientConflictLogger,
     TaskGradients,
-    assign_mean_gradients,
     collect_task_gradients,
     cosine_matrix,
+    mean_gradients,
     project_pcgrad_with_counts,
+    weighted_gradients,
 )
 
 
@@ -65,6 +67,7 @@ PRETRAIN_METHODS = (
     "joint_domain",
     "joint_mixed_matched",
     "joint",
+    "joint_proportional",
     "pcgrad",
 )
 
@@ -74,6 +77,7 @@ _METHOD_SPECS = {
     "joint_domain": PretrainMethodSpec(False, True, True, "joint"),
     "joint_mixed_matched": PretrainMethodSpec(False, False, True, "joint"),
     "joint": PretrainMethodSpec(False, False, False, "joint"),
+    "joint_proportional": PretrainMethodSpec(False, False, False, "joint"),
     "pcgrad": PretrainMethodSpec(False, False, False, "pcgrad"),
 }
 
@@ -201,6 +205,34 @@ class SingleTaskStepResult:
     initialization_hash: str
 
 
+def combine_multitask_gradients(
+    tasks: Sequence[TaskGradients],
+    *,
+    method: str,
+    domain_batch_sizes: Sequence[int],
+) -> TaskGradients:
+    """Reduce domain-mean gradients under the method's sampling objective."""
+    if method == "joint_proportional":
+        return weighted_gradients(tasks, domain_batch_sizes)
+    return mean_gradients(tasks)
+
+
+def combine_domain_losses(
+    losses: Mapping[int, float],
+    *,
+    method: str,
+    domain_batch_sizes: Mapping[int, int],
+) -> float:
+    if not losses:
+        raise ValueError("cannot combine empty domain losses")
+    if method != "joint_proportional":
+        return sum(losses.values()) / len(losses)
+    total = sum(domain_batch_sizes[domain] for domain in losses)
+    return sum(
+        loss * domain_batch_sizes[domain] for domain, loss in losses.items()
+    ) / total
+
+
 def pcgrad_projection_parameter_names(
     names: Sequence[str], *, scope: str
 ) -> tuple[str, ...]:
@@ -236,9 +268,19 @@ def prepare_batch_manifest(
     batch_size: int,
     steps: int,
     seed: int,
-) -> BalancedBatchPlan:
-    manifest = BalancedBatchPlan.create(
-        examples_by_domain, batch_size=batch_size, total_steps=steps, seed=seed
+    proportional: bool = False,
+) -> BalancedBatchPlan | ProportionalBatchPlan:
+    manifest = (
+        ProportionalBatchPlan.create(
+            examples_by_domain,
+            total_batch_size=batch_size * len(examples_by_domain),
+            total_steps=steps,
+            seed=seed,
+        )
+        if proportional
+        else BalancedBatchPlan.create(
+            examples_by_domain, batch_size=batch_size, total_steps=steps, seed=seed
+        )
     )
     manifest.write(path)
     return manifest
@@ -323,6 +365,7 @@ def run_multitask_step(
         for name, parameter in model.named_parameters()
         if parameter.requires_grad
     )
+    parameters_by_name = dict(named_parameters)
     task_gradients = []
     domain_loss_tensors: dict[int, torch.Tensor] = {}
     for domain in sorted(step_batches):
@@ -385,7 +428,15 @@ def run_multitask_step(
             projection_counts=projection_counts,
             groups=groups,
         )
-    assign_mean_gradients(dict(named_parameters), gradients_for_step)
+    combined = combine_multitask_gradients(
+        gradients_for_step,
+        method=method,
+        domain_batch_sizes=tuple(
+            len(step_batches[domain]) for domain in sorted(step_batches)
+        ),
+    )
+    for name, value in zip(combined.names, combined.values, strict=True):
+        parameters_by_name[name].grad = value
     norm = clip_global_grad_norm(model.parameters(), grad_clip_norm)
     optimizers.step()
     return MultiTaskStepResult(
@@ -784,6 +835,7 @@ def train_pretraining(
             batch_size=settings.batch_size,
             steps=total_steps,
             seed=settings.seed,
+            proportional=settings.method == "joint_proportional",
         )
         batch_steps = iter(manifest.iter_steps())
         example_lookup_by_domain = {
@@ -874,7 +926,16 @@ def train_pretraining(
                         compute_cosine=False,
                         pcgrad_projection_scope=settings.pcgrad_projection_scope,
                     )
-                    losses.extend(step_result.domain_losses.values())
+                    losses.append(
+                        combine_domain_losses(
+                            step_result.domain_losses,
+                            method=settings.method,
+                            domain_batch_sizes={
+                                domain: len(identifiers)
+                                for domain, identifiers in batches.items()
+                            },
+                        )
+                    )
                     for domain, value in step_result.domain_losses.items():
                         domain_loss_values[domain].append(value)
                     norms.append(step_result.gradient_norm)
