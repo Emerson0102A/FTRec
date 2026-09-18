@@ -62,6 +62,7 @@ class AdaptSettings:
     grad_clip_norm: float = 5.0
     device: str = "cpu"
     evaluation_protocol: str = "full"
+    num_train_negatives: int = 1
     num_eval_negatives: int = 100
     evaluation_seed: int = 2026
     evaluation_chunk_size: int = 4096
@@ -114,6 +115,8 @@ class AdaptSettings:
             raise ValueError("steps_per_epoch must be positive or automatic")
         if self.evaluation_protocol not in {"full", "sampled"}:
             raise ValueError("evaluation_protocol must be 'full' or 'sampled'")
+        if self.num_train_negatives < 1:
+            raise ValueError("num_train_negatives must be positive")
 
 
 @dataclass(frozen=True)
@@ -182,6 +185,8 @@ def adapt_config_hash(model_config: SASRecConfig, settings: AdaptSettings) -> st
     # otherwise identical completed run look conflicting.
     if training.get("bottleneck_size") is None:
         training.pop("bottleneck_size")
+    if training.get("num_train_negatives") == 1:
+        training.pop("num_train_negatives")
     return canonical_hash({"model": asdict(model_config), "training": training})
 
 
@@ -393,6 +398,7 @@ def train_adaptation(
         "embedding_lr": settings.embedding_lr,
         "lr": settings.lr,
         "method": settings.method,
+        "num_train_negatives": settings.num_train_negatives,
         "pretrain_method": settings.pretrain_method,
         "rank": settings.rank,
         "seed": settings.seed,
@@ -542,6 +548,7 @@ def train_adaptation(
                     bf16=settings.bf16,
                     samplers=samplers,
                     initialization_hash=base_hash,
+                    num_negatives=settings.num_train_negatives,
                 )
                 losses.append(step.loss)
                 norms.append(step.gradient_norm)

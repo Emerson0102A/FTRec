@@ -55,6 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int)
     parser.add_argument("--epochs", type=int)
     parser.add_argument("--steps-per-epoch", type=int)
+    parser.add_argument("--num-train-negatives", type=int)
     parser.add_argument("--device")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--no-progress", action="store_true")
@@ -241,6 +242,11 @@ def main(argv: list[str] | None = None) -> int:
                         evaluation_protocol=str(
                             config.get("evaluation_protocol", "full")
                         ),
+                        num_train_negatives=(
+                            args.num_train_negatives
+                            if args.num_train_negatives is not None
+                            else int(config.get("num_train_negatives", 1))
+                        ),
                         num_eval_negatives=int(config.get("num_eval_negatives", 100)),
                         evaluation_seed=int(config.get("evaluation_seed", 2026)),
                         evaluation_chunk_size=int(
@@ -277,6 +283,7 @@ def main(argv: list[str] | None = None) -> int:
                         "decision": decision,
                         "domain": domain,
                         "method": method,
+                        "num_train_negatives": settings.num_train_negatives,
                         "output_dir": str(output),
                         "pretrain_method": pretrain_method,
                         "rank": rank,

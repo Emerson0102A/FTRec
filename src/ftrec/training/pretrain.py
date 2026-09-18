@@ -294,16 +294,19 @@ def _task_loss(
     seed: int,
     bf16: bool = False,
     samplers: Mapping[int, SameDomainNegativeSampler] | None = None,
+    num_negatives: int = 1,
 ) -> torch.Tensor:
     if not examples:
         raise ValueError("a task micro-batch cannot be empty")
+    if num_negatives < 1:
+        raise ValueError("num_negatives must be positive")
     device = next(model.parameters()).device
     contexts = torch.tensor(
         [example.context_items for example in examples],
         dtype=torch.long,
         device=device,
     )
-    negatives = []
+    negatives: list[tuple[int, ...]] = []
     sampler_cache = dict(samplers or {})
     generators: dict[int, random.Random] = {}
     for example in examples:
@@ -316,10 +319,19 @@ def _task_loss(
         if generator is None:
             generator = random.Random(seed + domain)
             generators[domain] = generator
-        negatives.append(sampler.sample(example, rng=generator))
+        sampled = (
+            (sampler.sample(example, rng=generator),)
+            if num_negatives == 1
+            else sampler.sample_many(example, num_negatives, rng=generator)
+        )
+        if len(sampled) != num_negatives:
+            raise ValueError(
+                f"domain {domain} cannot provide {num_negatives} distinct negatives"
+            )
+        negatives.append(sampled)
     candidate_ids = torch.tensor(
         [
-            [example.positive_item, negative]
+            [example.positive_item, *negative]
             for example, negative in zip(examples, negatives, strict=True)
         ],
         dtype=torch.long,
@@ -331,7 +343,9 @@ def _task_loss(
         enabled=bf16,
     ):
         logits = model.score(contexts, candidate_ids)
-        return sampled_bce_loss(logits[:, 0], logits[:, 1])
+        negative_logits = logits[:, 1:]
+        positive_logits = logits[:, :1].expand_as(negative_logits)
+        return sampled_bce_loss(positive_logits, negative_logits)
 
 
 def run_multitask_step(
@@ -461,6 +475,7 @@ def run_single_task_step(
     bf16: bool = False,
     samplers: Mapping[int, SameDomainNegativeSampler] | None = None,
     initialization_hash: str = "not-computed",
+    num_negatives: int = 1,
 ) -> SingleTaskStepResult:
     if not examples:
         raise ValueError("single-task batch cannot be empty")
@@ -473,6 +488,7 @@ def run_single_task_step(
         seed=seed * 100_003 + global_step * 101,
         bf16=bf16,
         samplers=samplers,
+        num_negatives=num_negatives,
     )
     loss.backward()
     norm = clip_global_grad_norm(model.parameters(), grad_clip_norm)

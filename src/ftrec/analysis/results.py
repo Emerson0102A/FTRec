@@ -39,6 +39,7 @@ class ResultRow:
     target_modules: str | None = None
     bottleneck_size: int | None = None
     target_embedding_rows: int | None = None
+    num_train_negatives: int = 1
 
     @classmethod
     def from_dict(cls, value: Mapping[str, object]) -> "ResultRow":
@@ -110,6 +111,7 @@ class ResultRow:
                 target_embedding_rows=(
                     int(embedding_rows) if embedding_rows is not None else None
                 ),
+                num_train_negatives=int(value.get("num_train_negatives", 1)),
             )
         except (TypeError, ValueError) as error:
             raise ResultSchemaError(f"invalid result row: {error}") from error
@@ -147,6 +149,8 @@ class ResultRow:
             raise ResultSchemaError("trainable parameter count exceeds total")
         if self.num_eval_users < 0 or self.num_skipped_users < 0:
             raise ResultSchemaError("cohort counts must be non-negative")
+        if self.num_train_negatives < 1:
+            raise ResultSchemaError("num_train_negatives must be positive")
 
     @property
     def key(self) -> tuple[object, ...]:
@@ -158,6 +162,7 @@ class ResultRow:
             self.lora_rank,
             self.bottleneck_size,
             self.target_embedding_rows,
+            self.num_train_negatives,
             self.split,
             self.evaluation_protocol,
         )
@@ -184,6 +189,7 @@ class ResultRow:
             "target_modules": self.target_modules,
             "bottleneck_size": self.bottleneck_size,
             "target_embedding_rows": self.target_embedding_rows,
+            "num_train_negatives": self.num_train_negatives,
         }
 
 
@@ -202,6 +208,7 @@ class SummaryRow:
     target_modules: str | None = None
     bottleneck_size: int | None = None
     target_embedding_rows: int | None = None
+    num_train_negatives: int = 1
 
     def to_dict(self) -> dict[str, object]:
         return self.__dict__.copy()
@@ -233,6 +240,7 @@ def add_macro_rows(rows: Iterable[ResultRow]) -> tuple[ResultRow, ...]:
             row.evaluation_protocol,
             row.target_modules,
             row.bottleneck_size,
+            row.num_train_negatives,
         )
         grouped.setdefault(key, []).append(row)
     macros: list[ResultRow] = []
@@ -290,6 +298,7 @@ def aggregate_results(rows: Iterable[ResultRow]) -> tuple[SummaryRow, ...]:
             row.target_modules,
             row.bottleneck_size,
             row.target_embedding_rows,
+            row.num_train_negatives,
         )
         grouped.setdefault(key, []).append(row)
     result: list[SummaryRow] = []
@@ -312,6 +321,7 @@ def aggregate_results(rows: Iterable[ResultRow]) -> tuple[SummaryRow, ...]:
                 target_modules,
                 bottleneck_size,
                 target_embedding_rows,
+                num_train_negatives,
             ) = key
             result.append(
                 SummaryRow(
@@ -328,6 +338,7 @@ def aggregate_results(rows: Iterable[ResultRow]) -> tuple[SummaryRow, ...]:
                     target_modules=target_modules,
                     bottleneck_size=bottleneck_size,
                     target_embedding_rows=target_embedding_rows,
+                    num_train_negatives=num_train_negatives,
                 )
             )
     return tuple(
@@ -340,6 +351,7 @@ def aggregate_results(rows: Iterable[ResultRow]) -> tuple[SummaryRow, ...]:
                 row.lora_rank or 0,
                 row.bottleneck_size or 0,
                 row.target_embedding_rows or 0,
+                row.num_train_negatives,
                 row.metric,
             ),
         )
@@ -391,6 +403,7 @@ def collect_result_rows(root: str | Path) -> tuple[ResultRow, ...]:
             bottleneck_size = value.get("bottleneck_size")
             target_modules = value.get("target_modules")
             target_embedding_rows = value.get("target_embedding_rows")
+            num_train_negatives = value.get("num_train_negatives", 1)
         elif value.get("method") in {
             "single",
             "single_mixed",
@@ -407,6 +420,7 @@ def collect_result_rows(root: str | Path) -> tuple[ResultRow, ...]:
             bottleneck_size = None
             target_modules = None
             target_embedding_rows = None
+            num_train_negatives = 1
         else:
             continue
         for domain, metrics in metrics_by_domain.items():
@@ -419,6 +433,7 @@ def collect_result_rows(root: str | Path) -> tuple[ResultRow, ...]:
                 "bottleneck_size": bottleneck_size,
                 "target_modules": target_modules,
                 "target_embedding_rows": target_embedding_rows,
+                "num_train_negatives": num_train_negatives,
                 "split": "test",
                 "evaluation_protocol": metrics["evaluation_protocol"],
                 "HR@10": metrics["HR@10"],

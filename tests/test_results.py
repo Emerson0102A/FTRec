@@ -87,6 +87,19 @@ def test_result_schema_records_target_embedding_rows(
     assert row.lora_rank == rank
 
 
+def test_result_schema_distinguishes_training_negative_count() -> None:
+    from ftrec.analysis.results import ResultRow, validate_result_rows
+
+    one = _row()
+    thirty_one = ResultRow.from_dict(
+        {**one.to_dict(), "num_train_negatives": 31}
+    )
+
+    assert one.num_train_negatives == 1
+    assert thirty_one.num_train_negatives == 31
+    assert len(validate_result_rows((one, thirty_one))) == 2
+
+
 def test_aggregation_reports_sample_std_over_seeds() -> None:
     from ftrec.analysis.results import aggregate_results
 

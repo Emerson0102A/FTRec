@@ -359,7 +359,13 @@ def test_legacy_lora_hash_omits_inapplicable_bottleneck_field(tmp_path: Path) ->
         alpha=2,
     )
     legacy = asdict(settings)
-    for key in ("output_dir", "force", "progress", "bottleneck_size"):
+    for key in (
+        "output_dir",
+        "force",
+        "progress",
+        "bottleneck_size",
+        "num_train_negatives",
+    ):
         legacy.pop(key)
 
     assert adapt_config_hash(config, settings) == canonical_hash(

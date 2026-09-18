@@ -93,6 +93,19 @@ def test_production_configs_follow_gmflowrec_training_protocol() -> None:
     assert fullft_lr1e4["lr"] == pytest.approx(0.0001)
     assert fullft_lr1e4["embedding_lr"] == pytest.approx(0.0001)
 
+    for name, method in (
+        ("lora_all_multineg31", "lora_all"),
+        ("fullft_multineg31", "fullft"),
+    ):
+        config = load_config(root / "configs" / "experiment" / f"{name}.yaml")
+        assert config["method"] == method
+        assert config["base_root"] == "runs-lr1e-4"
+        assert config["output_root"] == "runs-multineg31"
+        assert config["pretrain_methods"] == ["joint_proportional"]
+        assert config["seeds"] == [42]
+        assert config["num_train_negatives"] == 31
+        assert config["lr"] == pytest.approx(0.0001)
+
     assert load_config(root / "configs" / "experiment" / "fullft.yaml")[
         "embedding_lr"
     ] == 0.001

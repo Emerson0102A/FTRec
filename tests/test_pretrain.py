@@ -569,6 +569,46 @@ def test_single_step_updates_model_with_sparse_and_dense_optimizers() -> None:
     assert not torch.equal(before, model.item_embedding.weight)
 
 
+def test_single_task_loss_supports_multiple_distinct_negatives() -> None:
+    import torch
+
+    from ftrec.data.datasets import TargetExample
+    from ftrec.training.pretrain import _task_loss
+
+    class ShapeModel(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.scale = torch.nn.Parameter(torch.tensor(1.0))
+            self.candidate_shape: tuple[int, ...] | None = None
+
+        def score(self, contexts, candidates):
+            self.candidate_shape = tuple(candidates.shape)
+            return torch.zeros(candidates.shape, device=contexts.device) + self.scale
+
+    model = ShapeModel()
+    example = TargetExample(
+        example_id=0,
+        user_id=1,
+        context_items=(0, 1, 2),
+        context_domains=(-1, 0, 0),
+        positive_item=3,
+        target_domain=0,
+        seen_items=frozenset({1, 2, 3}),
+    )
+
+    loss = _task_loss(
+        model,
+        (example,),
+        {0: tuple(range(1, 50))},
+        seed=42,
+        num_negatives=31,
+    )
+    loss.backward()
+
+    assert model.candidate_shape == (1, 32)
+    assert model.scale.grad is not None
+
+
 def test_joint_pretraining_run_writes_checkpoints_metrics_and_gradients(
     tmp_path: Path, capsys
 ) -> None:

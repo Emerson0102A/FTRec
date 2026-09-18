@@ -124,6 +124,26 @@ bash scripts/run_fullft_lr1e4.sh --seed 42
 embedding 均使用 `1e-4`，只运行 seed 42。它与旧的 `configs/experiment/fullft.yaml`
 相互独立，不覆盖原来的 `lr=1e-3` FullFT 设计。
 
+## 多负样本 adaptation 对照
+
+若低学习率 FullFT 仍无法提高 NDCG，可将训练目标从每个正样本搭配 1 个负样本
+改为搭配 31 个同域、互不重复且未见过的负样本，使训练候选更接近 999 负样本的
+sampled evaluation。正样本 BCE 与所有负样本 BCE 的均值各占一项，因此负样本数
+增加不会把负项的总权重放大 31 倍。
+
+```bash
+bash scripts/run_lora_all_multineg31.sh --seed 42 --dry-run
+bash scripts/run_fullft_multineg31.sh --seed 42 --dry-run
+
+bash scripts/run_lora_all_multineg31.sh --seed 42
+bash scripts/run_fullft_multineg31.sh --seed 42
+```
+
+两组配置均读取 `runs-lr1e-4` 的 `joint_proportional` 主干，学习率为 `1e-4`；
+LoRA 使用 all-linear rank 5，FullFT 同时以 `1e-4` 更新 dense 参数与 embedding。
+评测仍固定使用 999 个负样本。结果单独写入 `runs-multineg31/`，并在
+`result.json` 和汇总 CSV 中记录 `num_train_negatives: 31`，不会覆盖单负样本实验。
+
 ## 从 pilot 切换到正式 seed 42
 
 正式训练前先保留整个 pilot 目录，再让新的 100-epoch checkpoint 使用默认的
