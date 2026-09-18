@@ -57,6 +57,35 @@ def test_qv_lora_parameter_count_is_exact_and_monotonic() -> None:
     assert counts == sorted(counts)
 
 
+@pytest.mark.parametrize("scope,target_count", (("qkvo", 4), ("all_linear", 6)))
+def test_generalized_lora_scope_preserves_output_and_has_exact_capacity(
+    scope: str, target_count: int
+) -> None:
+    from ftrec.models.lora import count_trainable_parameters, inject_lora
+
+    base = _tiny_sasrec().eval()
+    rank = 3
+    adapted = inject_lora(
+        copy.deepcopy(base), rank=rank, alpha=rank, scope=scope
+    ).eval()
+
+    torch.testing.assert_close(adapted.encode(INPUTS), base.encode(INPUTS))
+    assert count_trainable_parameters(adapted) == target_count * 2 * 2 * 8 * rank
+    trainable = {
+        name for name, parameter in adapted.named_parameters() if parameter.requires_grad
+    }
+    if scope == "all_linear":
+        assert any("ffn.first" in name for name in trainable)
+        assert any("ffn.second" in name for name in trainable)
+
+
+def test_generalized_lora_rejects_unknown_scope() -> None:
+    from ftrec.models.lora import inject_lora
+
+    with pytest.raises(ValueError, match="unknown LoRA scope"):
+        inject_lora(_tiny_sasrec(), rank=2, alpha=2, scope="unknown")
+
+
 def test_lora_parameters_inherit_base_projection_device_and_dtype() -> None:
     """Catch adapters being created on CPU/float32 after a model moved to CUDA/bf16."""
     from torch import nn

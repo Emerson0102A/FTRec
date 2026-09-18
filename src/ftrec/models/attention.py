@@ -73,10 +73,20 @@ class SASRecBlock(nn.Module):
         self.attention = CausalSelfAttention(hidden_size, num_heads, dropout)
         self.ffn_norm = nn.LayerNorm(hidden_size, eps=1e-8)
         self.ffn = PointWiseFeedForward(hidden_size, dropout)
+        # Parameter-efficient adapters are injected only after a pretrained
+        # checkpoint has been loaded. Keeping these slots empty preserves the
+        # original checkpoint schema and model output exactly.
+        self.attention_adapter: nn.Module | None = None
+        self.ffn_adapter: nn.Module | None = None
 
     def forward(self, inputs: torch.Tensor, valid_tokens: torch.Tensor) -> torch.Tensor:
-        outputs = inputs + self.attention(self.attention_norm(inputs), valid_tokens)
+        attention_output = self.attention(self.attention_norm(inputs), valid_tokens)
+        if self.attention_adapter is not None:
+            attention_output = self.attention_adapter(attention_output)
+        outputs = inputs + attention_output
         outputs = outputs.masked_fill(~valid_tokens.unsqueeze(-1), 0.0)
-        outputs = outputs + self.ffn(self.ffn_norm(outputs))
+        ffn_output = self.ffn(self.ffn_norm(outputs))
+        if self.ffn_adapter is not None:
+            ffn_output = self.ffn_adapter(ffn_output)
+        outputs = outputs + ffn_output
         return outputs.masked_fill(~valid_tokens.unsqueeze(-1), 0.0)
-

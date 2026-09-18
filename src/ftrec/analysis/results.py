@@ -36,6 +36,8 @@ class ResultRow:
     config_hash: str
     data_hash: str
     contributing_domains: int | None = None
+    target_modules: str | None = None
+    bottleneck_size: int | None = None
 
     @classmethod
     def from_dict(cls, value: Mapping[str, object]) -> "ResultRow":
@@ -66,6 +68,14 @@ class ResultRow:
         contributing = value.get("contributing_domains")
         if contributing in (None, "", "null"):
             contributing = None
+        bottleneck = value.get("bottleneck_size")
+        if bottleneck in (None, "", "null"):
+            bottleneck = None
+        target_modules = value.get("target_modules")
+        if isinstance(target_modules, (list, tuple)):
+            target_modules = ",".join(str(item) for item in target_modules)
+        if target_modules in (None, "", "null"):
+            target_modules = None
         try:
             row = cls(
                 seed=int(value["seed"]),
@@ -87,6 +97,12 @@ class ResultRow:
                 contributing_domains=(
                     int(contributing) if contributing is not None else None
                 ),
+                target_modules=(
+                    str(target_modules) if target_modules is not None else None
+                ),
+                bottleneck_size=(
+                    int(bottleneck) if bottleneck is not None else None
+                ),
             )
         except (TypeError, ValueError) as error:
             raise ResultSchemaError(f"invalid result row: {error}") from error
@@ -96,10 +112,18 @@ class ResultRow:
     def validate(self) -> None:
         if self.evaluation_protocol not in {"full", "sampled"}:
             raise ResultSchemaError("evaluation_protocol must be full or sampled")
-        if self.adapt_method == "lora" and self.lora_rank is None:
+        lora_methods = {"lora", "lora_all"}
+        adapter_methods = {"houlsby", "pfeiffer"}
+        if self.adapt_method in lora_methods and self.lora_rank is None:
             raise ResultSchemaError("LoRA result requires lora_rank")
-        if self.adapt_method != "lora" and self.lora_rank is not None:
+        if self.adapt_method not in lora_methods and self.lora_rank is not None:
             raise ResultSchemaError("only LoRA results may contain lora_rank")
+        if self.adapt_method in adapter_methods and self.bottleneck_size is None:
+            raise ResultSchemaError("bottleneck adapter result requires bottleneck_size")
+        if self.adapt_method not in adapter_methods and self.bottleneck_size is not None:
+            raise ResultSchemaError(
+                "only bottleneck adapter results may contain bottleneck_size"
+            )
         if self.num_trainable_params < 0 or self.num_total_params < 1:
             raise ResultSchemaError("parameter counts must be non-negative and nonzero")
         if self.num_trainable_params > self.num_total_params:
@@ -115,6 +139,7 @@ class ResultRow:
             self.pretrain_method,
             self.adapt_method,
             self.lora_rank,
+            self.bottleneck_size,
             self.split,
             self.evaluation_protocol,
         )
@@ -138,6 +163,8 @@ class ResultRow:
             "config_hash": self.config_hash,
             "data_hash": self.data_hash,
             "contributing_domains": self.contributing_domains,
+            "target_modules": self.target_modules,
+            "bottleneck_size": self.bottleneck_size,
         }
 
 
@@ -153,6 +180,8 @@ class SummaryRow:
     mean: float
     std: float
     seeds: int
+    target_modules: str | None = None
+    bottleneck_size: int | None = None
 
     def to_dict(self) -> dict[str, object]:
         return self.__dict__.copy()
@@ -182,6 +211,8 @@ def add_macro_rows(rows: Iterable[ResultRow]) -> tuple[ResultRow, ...]:
             row.lora_rank,
             row.split,
             row.evaluation_protocol,
+            row.target_modules,
+            row.bottleneck_size,
         )
         grouped.setdefault(key, []).append(row)
     macros: list[ResultRow] = []
@@ -220,6 +251,8 @@ def aggregate_results(rows: Iterable[ResultRow]) -> tuple[SummaryRow, ...]:
             row.lora_rank,
             row.split,
             row.evaluation_protocol,
+            row.target_modules,
+            row.bottleneck_size,
         )
         grouped.setdefault(key, []).append(row)
     result: list[SummaryRow] = []
@@ -232,13 +265,30 @@ def aggregate_results(rows: Iterable[ResultRow]) -> tuple[SummaryRow, ...]:
             ]
             if not observations:
                 continue
+            (
+                domain,
+                pretrain_method,
+                adapt_method,
+                lora_rank,
+                split,
+                evaluation_protocol,
+                target_modules,
+                bottleneck_size,
+            ) = key
             result.append(
                 SummaryRow(
-                    *key,
+                    domain=domain,
+                    pretrain_method=pretrain_method,
+                    adapt_method=adapt_method,
+                    lora_rank=lora_rank,
+                    split=split,
+                    evaluation_protocol=evaluation_protocol,
                     metric=metric,
                     mean=statistics.fmean(observations),
                     std=statistics.stdev(observations) if len(observations) > 1 else 0.0,
                     seeds=len(observations),
+                    target_modules=target_modules,
+                    bottleneck_size=bottleneck_size,
                 )
             )
     return tuple(
@@ -249,6 +299,7 @@ def aggregate_results(rows: Iterable[ResultRow]) -> tuple[SummaryRow, ...]:
                 row.pretrain_method,
                 row.adapt_method,
                 row.lora_rank or 0,
+                row.bottleneck_size or 0,
                 row.metric,
             ),
         )
@@ -297,6 +348,8 @@ def collect_result_rows(root: str | Path) -> tuple[ResultRow, ...]:
             pretrain_method = str(value["pretrain_method"])
             adapt_method = str(value["method"])
             rank = value.get("rank")
+            bottleneck_size = value.get("bottleneck_size")
+            target_modules = value.get("target_modules")
         elif value.get("method") in {
             "single",
             "single_mixed",
@@ -310,6 +363,8 @@ def collect_result_rows(root: str | Path) -> tuple[ResultRow, ...]:
             pretrain_method = str(value["method"])
             adapt_method = "none"
             rank = None
+            bottleneck_size = None
+            target_modules = None
         else:
             continue
         for domain, metrics in metrics_by_domain.items():
@@ -319,6 +374,8 @@ def collect_result_rows(root: str | Path) -> tuple[ResultRow, ...]:
                 "pretrain_method": pretrain_method,
                 "adapt_method": adapt_method,
                 "lora_rank": rank,
+                "bottleneck_size": bottleneck_size,
+                "target_modules": target_modules,
                 "split": "test",
                 "evaluation_protocol": metrics["evaluation_protocol"],
                 "HR@10": metrics["HR@10"],

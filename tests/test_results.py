@@ -37,6 +37,32 @@ def test_result_row_requires_protocol_and_parameter_counts() -> None:
         ResultRow.from_dict({"seed": 42, "domain": "Health", "NDCG@10": 0.2})
 
 
+@pytest.mark.parametrize(
+    ("method", "rank", "bottleneck"),
+    (("lora_all", 3, None), ("houlsby", None, 8), ("pfeiffer", None, 16)),
+)
+def test_result_schema_records_parameter_efficient_capacity(
+    method: str, rank: int | None, bottleneck: int | None
+) -> None:
+    from ftrec.analysis.results import ResultRow
+
+    value = _row().to_dict()
+    value.update(
+        {
+            "adapt_method": method,
+            "lora_rank": rank,
+            "bottleneck_size": bottleneck,
+            "target_modules": ["ffn.first", "ffn.second"],
+        }
+    )
+
+    row = ResultRow.from_dict(value)
+
+    assert row.lora_rank == rank
+    assert row.bottleneck_size == bottleneck
+    assert row.target_modules == "ffn.first,ffn.second"
+
+
 def test_aggregation_reports_sample_std_over_seeds() -> None:
     from ftrec.analysis.results import aggregate_results
 

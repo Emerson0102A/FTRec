@@ -1,4 +1,4 @@
-"""Domain LoRA and full-parameter adaptation from pretrained SASRec checkpoints."""
+"""Domain parameter-efficient and full adaptation from SASRec checkpoints."""
 
 from __future__ import annotations
 
@@ -23,8 +23,10 @@ from ftrec.data.sampling import (
     resolve_evaluation_candidates,
 )
 from ftrec.evaluation.ranking import evaluate_model
+from ftrec.models.adapters import adapter_parameter_names, inject_adapters
 from ftrec.models.lora import (
-    inject_qv_lora,
+    LORA_SCOPES,
+    inject_lora,
     load_adapter_checkpoint,
     lora_parameter_names,
     save_adapter_checkpoint,
@@ -44,6 +46,7 @@ class AdaptSettings:
     output_dir: Path
     rank: int | None = None
     alpha: float | None = None
+    bottleneck_size: int | None = None
     seed: int = 42
     batch_size: int = 128
     steps_per_epoch: int | None = 100
@@ -65,19 +68,30 @@ class AdaptSettings:
     progress: bool = True
 
     def __post_init__(self) -> None:
-        if self.method not in {"lora", "fullft"}:
-            raise ValueError("method must be 'lora' or 'fullft'")
+        if self.method not in {"lora", "lora_all", "houlsby", "pfeiffer", "fullft"}:
+            raise ValueError(
+                "method must be lora, lora_all, houlsby, pfeiffer, or fullft"
+            )
         if self.pretrain_method not in {"joint", "pcgrad"}:
             raise ValueError("pretrain_method must be 'joint' or 'pcgrad'")
         if self.domain < 0:
             raise ValueError("domain must be non-negative")
-        if self.method == "lora":
+        if self.method in {"lora", "lora_all"}:
             if self.rank is None or self.rank < 1:
                 raise ValueError("LoRA adaptation requires a positive rank")
             if self.alpha is None or self.alpha <= 0:
                 raise ValueError("LoRA adaptation requires a positive alpha")
+            if self.bottleneck_size is not None:
+                raise ValueError("bottleneck_size is only valid for bottleneck adapters")
+        elif self.method in {"houlsby", "pfeiffer"}:
+            if self.bottleneck_size is None or self.bottleneck_size < 1:
+                raise ValueError("adapter adaptation requires a positive bottleneck_size")
+            if self.rank is not None or self.alpha is not None:
+                raise ValueError("rank and alpha are only valid for LoRA")
         elif self.rank is not None or self.alpha is not None:
             raise ValueError("rank and alpha are only valid for LoRA")
+        elif self.bottleneck_size is not None:
+            raise ValueError("bottleneck_size is only valid for bottleneck adapters")
         for name in ("batch_size", "epochs", "patience"):
             if getattr(self, name) < 1:
                 raise ValueError(f"{name} must be positive")
@@ -101,6 +115,26 @@ class AdaptRunResult:
     test_metrics: dict[str, float | int | str]
 
 
+def is_lora_method(method: str) -> bool:
+    return method in {"lora", "lora_all"}
+
+
+def is_parameter_efficient_method(method: str) -> bool:
+    return method in {"lora", "lora_all", "houlsby", "pfeiffer"}
+
+
+def target_modules_for_method(method: str) -> tuple[str, ...]:
+    if method == "lora":
+        return LORA_SCOPES["qv"]
+    if method == "lora_all":
+        return LORA_SCOPES["all_linear"]
+    if method == "houlsby":
+        return ("attention_adapter", "ffn_adapter")
+    if method == "pfeiffer":
+        return ("ffn_adapter",)
+    return ("all",)
+
+
 def resolve_adapt_steps_per_epoch(
     example_count: int, *, batch_size: int, requested: int | None
 ) -> int:
@@ -117,6 +151,11 @@ def adapt_config_hash(model_config: SASRecConfig, settings: AdaptSettings) -> st
     training.pop("output_dir")
     training.pop("force")
     training.pop("progress")
+    # Preserve the lineage hash of legacy LoRA/FullFT runs created before
+    # bottleneck adapters were added. An inapplicable null must not make an
+    # otherwise identical completed run look conflicting.
+    if training.get("bottleneck_size") is None:
+        training.pop("bottleneck_size")
     return canonical_hash({"model": asdict(model_config), "training": training})
 
 
@@ -208,9 +247,10 @@ def train_adaptation(
         seed_offset=20_000,
         sampled_candidates=test_candidates,
     )
-    if settings.method == "lora":
+    if is_lora_method(settings.method):
         assert settings.rank is not None and settings.alpha is not None
-        inject_qv_lora(model, settings.rank, settings.alpha)
+        scope = "qv" if settings.method == "lora" else "all_linear"
+        inject_lora(model, settings.rank, settings.alpha, scope=scope)
         trainable_names = lora_parameter_names(model)
         expected_names = tuple(
             name
@@ -219,6 +259,21 @@ def train_adaptation(
         )
         if trainable_names != expected_names:
             raise RuntimeError("non-LoRA parameters are trainable")
+    elif settings.method in {"houlsby", "pfeiffer"}:
+        assert settings.bottleneck_size is not None
+        inject_adapters(
+            model,
+            method=settings.method,
+            bottleneck_size=settings.bottleneck_size,
+        )
+        trainable_names = adapter_parameter_names(model)
+        expected_names = tuple(
+            name
+            for name, parameter in model.named_parameters()
+            if parameter.requires_grad
+        )
+        if trainable_names != expected_names:
+            raise RuntimeError("non-adapter parameters are trainable")
     else:
         for parameter in model.parameters():
             parameter.requires_grad_(True)
@@ -267,6 +322,7 @@ def train_adaptation(
     config_hash = adapt_config_hash(model_config, settings)
     metadata = {
         "alpha": settings.alpha,
+        "bottleneck_size": settings.bottleneck_size,
         "base_hash": base_hash,
         "config_hash": config_hash,
         "data_hash": settings.data_hash,
@@ -275,6 +331,7 @@ def train_adaptation(
         "pretrain_method": settings.pretrain_method,
         "rank": settings.rank,
         "seed": settings.seed,
+        "target_modules": target_modules_for_method(settings.method),
     }
     stopping = EarlyStopping(settings.patience)
     final_validation: dict[str, float | int | str] = {}
@@ -322,7 +379,7 @@ def train_adaptation(
 
         def save_selected(path: Path, epoch: int) -> None:
             state = {"epoch": epoch, "global_step": global_step}
-            if settings.method == "lora":
+            if is_parameter_efficient_method(settings.method):
                 save_adapter_checkpoint(
                     path, model, metadata=metadata, training_state=state
                 )
@@ -484,7 +541,7 @@ def train_adaptation(
 
         if not (run.path / "best.pt").exists():
             save_selected(run.path / "best.pt", last_epoch)
-        if settings.method == "lora":
+        if is_parameter_efficient_method(settings.method):
             load_adapter_checkpoint(
                 run.path / "best.pt", model, expected=metadata, map_location=device
             )
@@ -524,6 +581,7 @@ def train_adaptation(
                 "method": settings.method,
                 "pretrain_method": settings.pretrain_method,
                 "rank": settings.rank,
+                "bottleneck_size": settings.bottleneck_size,
                 "seed": settings.seed,
             }
         )

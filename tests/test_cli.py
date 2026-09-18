@@ -98,6 +98,9 @@ def test_server_scripts_are_fail_fast_and_stage_scoped() -> None:
         "run_joint.sh",
         "run_pcgrad.sh",
         "run_lora.sh",
+        "run_lora_all.sh",
+        "run_houlsby.sh",
+        "run_pfeiffer.sh",
         "run_fullft.sh",
         "run_analysis.sh",
         "run_pilot.sh",
@@ -120,6 +123,9 @@ def test_production_training_configs_enable_bf16() -> None:
         "joint.yaml",
         "pcgrad.yaml",
         "lora.yaml",
+        "lora_all.yaml",
+        "houlsby.yaml",
+        "pfeiffer.yaml",
         "fullft.yaml",
     ):
         config = yaml.safe_load(
@@ -337,6 +343,15 @@ def test_adaptation_rank_subset_limits_the_matrix(tmp_path: Path) -> None:
     payload = json.loads(result.stdout)
     assert payload["combinations"] == 3
     assert [run["rank"] for run in payload["runs"]] == [1, 2, 4]
+
+
+@pytest.mark.parametrize("method", ("lora_all", "houlsby", "pfeiffer"))
+def test_adapt_cli_exposes_parameter_efficient_methods(method: str) -> None:
+    from ftrec.cli.adapt import build_parser
+
+    args = build_parser().parse_args(["--method", method])
+
+    assert args.method == method
 
 
 @pytest.mark.parametrize(

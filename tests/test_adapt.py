@@ -20,6 +20,17 @@ from ftrec.models.sasrec import SASRec, SASRecConfig
 from ftrec.training.checkpoint import save_checkpoint
 
 
+ADAPT_METHODS = ("lora", "lora_all", "houlsby", "pfeiffer", "fullft")
+
+
+def _capacity_kwargs(method: str) -> dict[str, int | None]:
+    return {
+        "rank": 2 if method in {"lora", "lora_all"} else None,
+        "alpha": 2 if method in {"lora", "lora_all"} else None,
+        "bottleneck_size": 2 if method in {"houlsby", "pfeiffer"} else None,
+    }
+
+
 def _fixture(tmp_path: Path):
     config = SASRecConfig(
         num_items=5,
@@ -51,7 +62,7 @@ def _fixture(tmp_path: Path):
     return store, config, checkpoint
 
 
-@pytest.mark.parametrize("method", ("lora", "fullft"))
+@pytest.mark.parametrize("method", ADAPT_METHODS)
 def test_adaptation_run_writes_selected_checkpoint_and_result(
     tmp_path: Path, method: str, capsys
 ) -> None:
@@ -68,8 +79,7 @@ def test_adaptation_run_writes_selected_checkpoint_and_result(
             pretrain_method="joint",
             domain=0,
             output_dir=output,
-            rank=2 if method == "lora" else None,
-            alpha=2 if method == "lora" else None,
+            **_capacity_kwargs(method),
             seed=42,
             batch_size=1,
             steps_per_epoch=1,
@@ -105,6 +115,15 @@ def test_adaptation_run_writes_selected_checkpoint_and_result(
             ("q_proj" in name or "v_proj" in name) and ".lora_" in name
             for name in result.trainable_names
         )
+        assert result.num_trainable_params < result.num_total_params
+    elif method == "lora_all":
+        assert all(".lora_" in name for name in result.trainable_names)
+        assert any("ffn.first" in name for name in result.trainable_names)
+        assert payload["target_modules"][-1] == "ffn.second"
+        assert result.num_trainable_params < result.num_total_params
+    elif method in {"houlsby", "pfeiffer"}:
+        assert all("_adapter." in name for name in result.trainable_names)
+        assert payload["bottleneck_size"] == 2
         assert result.num_trainable_params < result.num_total_params
     else:
         assert result.num_trainable_params == result.num_total_params
@@ -286,4 +305,29 @@ def test_adapt_config_hash_ignores_output_control_fields(tmp_path: Path) -> None
             force=True,
             progress=False,
         ),
+    )
+
+
+def test_legacy_lora_hash_omits_inapplicable_bottleneck_field(tmp_path: Path) -> None:
+    """Keep existing completed LoRA runs resumable after adding new PEFT methods."""
+    from dataclasses import asdict
+
+    from ftrec.config import canonical_hash
+    from ftrec.training.adapt import AdaptSettings, adapt_config_hash
+
+    _, config, _ = _fixture(tmp_path)
+    settings = AdaptSettings(
+        method="lora",
+        pretrain_method="joint",
+        domain=0,
+        output_dir=tmp_path / "legacy",
+        rank=2,
+        alpha=2,
+    )
+    legacy = asdict(settings)
+    for key in ("output_dir", "force", "progress", "bottleneck_size"):
+        legacy.pop(key)
+
+    assert adapt_config_hash(config, settings) == canonical_hash(
+        {"model": asdict(config), "training": legacy}
     )

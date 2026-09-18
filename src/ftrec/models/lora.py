@@ -1,4 +1,4 @@
-"""Q/V-only low-rank adapters for the explicit-projection SASRec."""
+"""Low-rank adapters for the explicit-projection SASRec."""
 
 from __future__ import annotations
 
@@ -62,17 +62,58 @@ def freeze_for_lora(model: nn.Module) -> tuple[str, ...]:
     return tuple(trainable)
 
 
-def inject_qv_lora(model: SASRec, rank: int, alpha: float) -> SASRec:
+LORA_SCOPES: dict[str, tuple[str, ...]] = {
+    "qv": ("attention.q_proj", "attention.v_proj"),
+    "qkvo": (
+        "attention.q_proj",
+        "attention.k_proj",
+        "attention.v_proj",
+        "attention.out_proj",
+    ),
+    "all_linear": (
+        "attention.q_proj",
+        "attention.k_proj",
+        "attention.v_proj",
+        "attention.out_proj",
+        "ffn.first",
+        "ffn.second",
+    ),
+}
+
+
+def _parent_and_attribute(block: nn.Module, path: str) -> tuple[nn.Module, str]:
+    parts = path.split(".")
+    parent = block
+    for part in parts[:-1]:
+        parent = getattr(parent, part)
+    return parent, parts[-1]
+
+
+def inject_lora(
+    model: SASRec, rank: int, alpha: float, *, scope: str = "qv"
+) -> SASRec:
+    try:
+        targets = LORA_SCOPES[scope]
+    except KeyError as error:
+        raise ValueError(
+            f"unknown LoRA scope {scope!r}; expected one of {sorted(LORA_SCOPES)}"
+        ) from error
     for block in model.blocks:
-        attention = block.attention
-        if isinstance(attention.q_proj, LoRALinear) or isinstance(
-            attention.v_proj, LoRALinear
-        ):
-            raise ValueError("LoRA has already been injected")
-        attention.q_proj = LoRALinear(attention.q_proj, rank, alpha)
-        attention.v_proj = LoRALinear(attention.v_proj, rank, alpha)
+        for path in targets:
+            parent, attribute = _parent_and_attribute(block, path)
+            base = getattr(parent, attribute)
+            if isinstance(base, LoRALinear):
+                raise ValueError("LoRA has already been injected")
+            if not isinstance(base, nn.Linear):
+                raise TypeError(f"LoRA target {path!r} is not nn.Linear")
+            setattr(parent, attribute, LoRALinear(base, rank, alpha))
     freeze_for_lora(model)
     return model
+
+
+def inject_qv_lora(model: SASRec, rank: int, alpha: float) -> SASRec:
+    """Backward-compatible Q/V-only injection entry point."""
+    return inject_lora(model, rank, alpha, scope="qv")
 
 
 def lora_parameter_names(model: nn.Module) -> tuple[str, ...]:
@@ -95,6 +136,20 @@ def lora_state_dict(model: nn.Module) -> dict[str, torch.Tensor]:
     }
 
 
+def parameter_efficient_state_dict(model: nn.Module) -> dict[str, torch.Tensor]:
+    """Return only trainable PEFT tensors from a frozen-backbone model."""
+    trainable = {
+        name for name, parameter in model.named_parameters() if parameter.requires_grad
+    }
+    if not trainable:
+        raise ValueError("model contains no trainable parameter-efficient tensors")
+    return {
+        name: tensor.detach().cpu().clone()
+        for name, tensor in model.state_dict().items()
+        if name in trainable
+    }
+
+
 def save_adapter_checkpoint(
     path: str | Path,
     model: nn.Module,
@@ -105,7 +160,7 @@ def save_adapter_checkpoint(
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "adapter": lora_state_dict(model),
+        "adapter": parameter_efficient_state_dict(model),
         "metadata": dict(metadata),
         "schema_version": 1,
         "training_state": dict(training_state or {}),

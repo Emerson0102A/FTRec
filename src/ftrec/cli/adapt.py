@@ -1,4 +1,4 @@
-"""Run the LoRA or FullFT adaptation matrix."""
+"""Run the parameter-efficient or FullFT adaptation matrix."""
 
 from __future__ import annotations
 
@@ -12,7 +12,12 @@ from ftrec.artifacts import sha256_file
 from ftrec.config import load_config
 from ftrec.data.datasets import SequenceStore
 from ftrec.models.sasrec import SASRecConfig
-from ftrec.training.adapt import AdaptSettings, adapt_config_hash, train_adaptation
+from ftrec.training.adapt import (
+    AdaptSettings,
+    adapt_config_hash,
+    is_lora_method,
+    train_adaptation,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -26,11 +31,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--processed-dir", type=Path)
     parser.add_argument("--base-checkpoint", type=Path)
     parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--method", choices=("lora", "fullft"))
+    parser.add_argument(
+        "--method", choices=("lora", "lora_all", "houlsby", "pfeiffer", "fullft")
+    )
     parser.add_argument("--pretrain-method", choices=("joint", "pcgrad"))
     parser.add_argument("--domain", type=int)
     parser.add_argument("--rank", type=int)
     parser.add_argument("--ranks", type=int, nargs="+")
+    parser.add_argument("--bottleneck-size", type=int)
+    parser.add_argument("--bottleneck-sizes", type=int, nargs="+")
     parser.add_argument("--seed", type=int)
     parser.add_argument("--epochs", type=int)
     parser.add_argument("--steps-per-epoch", type=int)
@@ -74,11 +83,14 @@ def _output_path(
     pretrain_method: str,
     domain: int,
     rank: int | None,
+    bottleneck_size: int | None,
     seed: int,
 ) -> Path:
     path = root / "adapt" / method / pretrain_method / f"domain-{domain}"
     if rank is not None:
         path = path / f"rank-{rank}"
+    if bottleneck_size is not None:
+        path = path / f"bottleneck-{bottleneck_size}"
     return path / f"seed-{seed}"
 
 
@@ -103,8 +115,10 @@ def main(argv: list[str] | None = None) -> int:
     seeds = tuple(
         int(value) for value in _list_or_selected(config.get("seeds", (42,)), args.seed)
     )
-    ranks: tuple[int | None, ...]
-    if method == "lora":
+    matrix_values: tuple[tuple[int | None, int | None], ...]
+    if is_lora_method(method):
+        if args.bottleneck_size is not None or args.bottleneck_sizes is not None:
+            raise ValueError("bottleneck sizes are only valid with bottleneck adapters")
         if args.rank is not None and args.ranks is not None:
             raise ValueError("--rank and --ranks cannot be used together")
         if args.ranks is not None:
@@ -116,11 +130,31 @@ def main(argv: list[str] | None = None) -> int:
                     config.get("ranks", (1, 2, 4, 8, 16)), args.rank
                 )
             )
+        matrix_values = tuple((rank, None) for rank in ranks)
+    elif method in {"houlsby", "pfeiffer"}:
+        if args.rank is not None or args.ranks is not None:
+            raise ValueError("--rank and --ranks are only valid with LoRA")
+        if args.bottleneck_size is not None and args.bottleneck_sizes is not None:
+            raise ValueError(
+                "--bottleneck-size and --bottleneck-sizes cannot be used together"
+            )
+        if args.bottleneck_sizes is not None:
+            bottleneck_sizes = tuple(args.bottleneck_sizes)
+        else:
+            bottleneck_sizes = tuple(
+                int(value)
+                for value in _list_or_selected(
+                    config.get("bottleneck_sizes", (8, 16)), args.bottleneck_size
+                )
+            )
+        matrix_values = tuple((None, size) for size in bottleneck_sizes)
     else:
         if args.rank is not None or args.ranks is not None:
             raise ValueError("--rank and --ranks are only valid with LoRA")
-        ranks = (None,)
-    combinations = len(pretrain_methods) * len(domains) * len(ranks) * len(seeds)
+        if args.bottleneck_size is not None or args.bottleneck_sizes is not None:
+            raise ValueError("bottleneck sizes are only valid with bottleneck adapters")
+        matrix_values = ((None, None),)
+    combinations = len(pretrain_methods) * len(domains) * len(matrix_values) * len(seeds)
     progress_enabled = bool(config.get("progress", True)) and not args.no_progress
     if args.output_dir is not None and combinations != 1:
         raise ValueError("--output-dir requires selecting one exact combination")
@@ -146,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     for pretrain_method in pretrain_methods:
         for domain in domains:
-            for rank in ranks:
+            for rank, bottleneck_size in matrix_values:
                 for seed in seeds:
                     base = args.base_checkpoint or _base_path(
                         base_root, pretrain_method, seed
@@ -157,6 +191,7 @@ def main(argv: list[str] | None = None) -> int:
                         pretrain_method,
                         domain,
                         rank,
+                        bottleneck_size,
                         seed,
                     )
                     alpha_config = config.get("alpha")
@@ -172,6 +207,7 @@ def main(argv: list[str] | None = None) -> int:
                         output_dir=output,
                         rank=rank,
                         alpha=alpha,
+                        bottleneck_size=bottleneck_size,
                         seed=seed,
                         batch_size=int(config["batch_size"]),
                         steps_per_epoch=_steps_per_epoch(
@@ -232,6 +268,7 @@ def main(argv: list[str] | None = None) -> int:
                         "output_dir": str(output),
                         "pretrain_method": pretrain_method,
                         "rank": rank,
+                        "bottleneck_size": bottleneck_size,
                         "seed": seed,
                     }
                     reports.append(report)

@@ -1,0 +1,25 @@
+processed_dir: data/processed/gmflowrec-amazon
+base_root: runs
+output_root: runs
+method: lora_all
+pretrain_methods: [joint, pcgrad]
+domains: [0, 1, 2, 3, 4]
+ranks: [3, 5]
+seeds: [42, 43, 44, 45, 46]
+alpha: null
+device: cuda
+bf16: true
+progress: true
+batch_size: 256
+steps_per_epoch: auto
+epochs: 100
+patience: 10
+lr: 0.001
+embedding_lr: null
+weight_decay: 0.0
+grad_clip_norm: 5.0
+evaluation_protocol: sampled
+evaluation_chunk_size: 4096
+evaluation_batch_size: 256
+num_eval_negatives: 999
+evaluation_seed: 2026

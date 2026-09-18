@@ -41,7 +41,16 @@ def test_production_configs_follow_gmflowrec_training_protocol() -> None:
     from ftrec.config import load_config
 
     root = Path(__file__).parents[1]
-    for name in ("single", "joint", "pcgrad", "lora", "fullft"):
+    for name in (
+        "single",
+        "joint",
+        "pcgrad",
+        "lora",
+        "lora_all",
+        "houlsby",
+        "pfeiffer",
+        "fullft",
+    ):
         config = load_config(root / "configs" / "experiment" / f"{name}.yaml")
         assert config["processed_dir"] == "data/processed/gmflowrec-amazon"
         assert config["batch_size"] == 256
@@ -54,6 +63,15 @@ def test_production_configs_follow_gmflowrec_training_protocol() -> None:
     assert load_config(root / "configs" / "experiment" / "fullft.yaml")[
         "embedding_lr"
     ] == 0.001
+    assert load_config(root / "configs" / "experiment" / "lora_all.yaml")[
+        "ranks"
+    ] == [3, 5]
+    assert load_config(root / "configs" / "experiment" / "houlsby.yaml")[
+        "bottleneck_sizes"
+    ] == [8, 16]
+    assert load_config(root / "configs" / "experiment" / "pfeiffer.yaml")[
+        "bottleneck_sizes"
+    ] == [16, 32]
     for name in ("joint", "pcgrad"):
         conflict = load_config(root / "configs" / "experiment" / f"{name}.yaml")[
             "gradient_conflict"

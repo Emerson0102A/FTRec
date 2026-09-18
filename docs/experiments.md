@@ -60,6 +60,32 @@ ftrec-analyze --runs-root runs --output-dir results/pilot-seed-42
 pilot 只用于筛选研究方向，不能替代多 seed 正式结论。需要复核随机稳定性时，
 再执行下面的完整矩阵。
 
+## 参数匹配的 PEFT 诊断
+
+当 Q/V LoRA 与 FullFT 之间存在明显差距时，使用下面三组配置判断瓶颈来自
+LoRA 插入范围还是适配结构。所有方法复用相同 backbone、域内 target、混合历史、
+固定 999 个负样本和 epoch-0 checkpoint 选择规则：
+
+```bash
+bash scripts/run_lora_all.sh --pretrain-method joint --seed 42 --dry-run
+bash scripts/run_houlsby.sh --pretrain-method joint --seed 42 --dry-run
+bash scripts/run_pfeiffer.sh --pretrain-method joint --seed 42 --dry-run
+
+bash scripts/run_lora_all.sh --pretrain-method joint --seed 42
+bash scripts/run_houlsby.sh --pretrain-method joint --seed 42
+bash scripts/run_pfeiffer.sh --pretrain-method joint --seed 42
+```
+
+默认容量经过近似匹配：Q/V LoRA rank 8/16 分别约 4k/8k 参数；all-linear
+LoRA 使用 rank 3/5，Houlsby 使用 bottleneck 8/16，Pfeiffer 使用 bottleneck
+16/32。`lora_all` 同时适配 Q/K/V/O 与两层 FFN；Houlsby 在 attention 和 FFN
+后各放一个残差 bottleneck；Pfeiffer 只适配 FFN。先跑 Joint、seed 42，只有
+差异明确后再补 PCGrad 和其余 seeds。
+
+每个 `result.json` 和汇总 CSV 都记录 `target_modules`、`rank`、
+`bottleneck_size` 和实际可训练参数量，比较时优先使用实际参数量而不是只看
+rank 或 bottleneck 名义值。
+
 ## 从 pilot 切换到正式 seed 42
 
 正式训练前先保留整个 pilot 目录，再让新的 100-epoch checkpoint 使用默认的
