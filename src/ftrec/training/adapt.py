@@ -15,7 +15,12 @@ from tqdm.auto import tqdm
 
 from ftrec.artifacts import RunDirectory, sha256_file
 from ftrec.config import canonical_hash, canonical_json
-from ftrec.data.datasets import SequenceStore, TargetExample, build_mixed_examples
+from ftrec.data.datasets import (
+    SequenceStore,
+    TargetExample,
+    build_mixed_examples,
+    build_single_domain_examples,
+)
 from ftrec.data.sampling import (
     BalancedBatchPlan,
     SameDomainNegativeSampler,
@@ -67,6 +72,8 @@ class AdaptSettings:
     evaluation_seed: int = 2026
     evaluation_chunk_size: int = 4096
     evaluation_batch_size: int = 128
+    context_mode: str = "mixed"
+    min_domain_sequence_length: int = 1
     bf16: bool = False
     data_hash: str = "unknown"
     force: bool = False
@@ -117,6 +124,10 @@ class AdaptSettings:
             raise ValueError("evaluation_protocol must be 'full' or 'sampled'")
         if self.num_train_negatives < 1:
             raise ValueError("num_train_negatives must be positive")
+        if self.context_mode not in {"mixed", "target_only"}:
+            raise ValueError("context_mode must be 'mixed' or 'target_only'")
+        if self.min_domain_sequence_length < 1:
+            raise ValueError("min_domain_sequence_length must be positive")
 
 
 @dataclass(frozen=True)
@@ -187,7 +198,37 @@ def adapt_config_hash(model_config: SASRecConfig, settings: AdaptSettings) -> st
         training.pop("bottleneck_size")
     if training.get("num_train_negatives") == 1:
         training.pop("num_train_negatives")
+    if training.get("context_mode") == "mixed":
+        training.pop("context_mode")
+    if training.get("min_domain_sequence_length") == 1:
+        training.pop("min_domain_sequence_length")
     return canonical_hash({"model": asdict(model_config), "training": training})
+
+
+def _build_adaptation_examples(
+    store: SequenceStore,
+    model_config: SASRecConfig,
+    settings: AdaptSettings,
+    *,
+    split: str,
+) -> tuple[tuple[TargetExample, ...], int]:
+    if settings.context_mode == "target_only":
+        examples = build_single_domain_examples(
+            store,
+            split=split,
+            domain=settings.domain,
+            maxlen=model_config.maxlen,
+            min_domain_sequence_length=settings.min_domain_sequence_length,
+        )
+    else:
+        examples = build_mixed_examples(
+            store,
+            split=split,
+            target_domain=settings.domain,
+            maxlen=model_config.maxlen,
+            min_domain_sequence_length=settings.min_domain_sequence_length,
+        )
+    return tuple(examples), store.last_build_skipped
 
 
 def _candidate_map(
@@ -259,13 +300,8 @@ def train_adaptation(
         expected["data_hash"] = settings.data_hash
     load_checkpoint(base_checkpoint, model, expected=expected, map_location=device)
 
-    test_examples = tuple(
-        build_mixed_examples(
-            store,
-            split="test",
-            target_domain=settings.domain,
-            maxlen=model_config.maxlen,
-        )
+    test_examples, test_skipped = _build_adaptation_examples(
+        store, model_config, settings, split="test"
     )
     test_candidates = _candidate_map(
         test_examples, store, settings, split="test", seed_offset=20_000
@@ -353,21 +389,11 @@ def train_adaptation(
         parameter.numel() for parameter in model.parameters() if parameter.requires_grad
     )
     num_total = sum(parameter.numel() for parameter in model.parameters())
-    train_examples = tuple(
-        build_mixed_examples(
-            store,
-            split="train",
-            target_domain=settings.domain,
-            maxlen=model_config.maxlen,
-        )
+    train_examples, train_skipped = _build_adaptation_examples(
+        store, model_config, settings, split="train"
     )
-    validation_examples = tuple(
-        build_mixed_examples(
-            store,
-            split="valid",
-            target_domain=settings.domain,
-            maxlen=model_config.maxlen,
-        )
+    validation_examples, validation_skipped = _build_adaptation_examples(
+        store, model_config, settings, split="valid"
     )
     if not train_examples:
         raise ValueError(f"domain {settings.domain} has no adaptation examples")
@@ -393,11 +419,13 @@ def train_adaptation(
         "bottleneck_size": settings.bottleneck_size,
         "base_hash": base_hash,
         "config_hash": config_hash,
+        "context_mode": settings.context_mode,
         "data_hash": settings.data_hash,
         "domain": settings.domain,
         "embedding_lr": settings.embedding_lr,
         "lr": settings.lr,
         "method": settings.method,
+        "min_domain_sequence_length": settings.min_domain_sequence_length,
         "num_train_negatives": settings.num_train_negatives,
         "pretrain_method": settings.pretrain_method,
         "rank": settings.rank,
@@ -642,6 +670,16 @@ def train_adaptation(
             "best_validation_ndcg": stopping.best_metric,
             "checkpoint_path": str(Path(settings.output_dir) / "best.pt"),
             "initial_validation_metrics": initial_validation,
+            "num_examples": {
+                "test": len(test_examples),
+                "train": len(train_examples),
+                "valid": len(validation_examples),
+            },
+            "num_filtered_examples": {
+                "test": test_skipped,
+                "train": train_skipped,
+                "valid": validation_skipped,
+            },
             "num_total_params": num_total,
             "num_trainable_params": num_trainable,
             "pretrain_metrics": pretrain_metrics,
@@ -656,7 +694,9 @@ def train_adaptation(
                 "config_hash": config_hash,
                 "data_hash": settings.data_hash,
                 "domain": settings.domain,
+                "context_mode": settings.context_mode,
                 "method": settings.method,
+                "min_domain_sequence_length": settings.min_domain_sequence_length,
                 "pretrain_method": settings.pretrain_method,
                 "rank": settings.rank,
                 "bottleneck_size": settings.bottleneck_size,

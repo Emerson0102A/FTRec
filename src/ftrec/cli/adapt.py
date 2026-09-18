@@ -56,6 +56,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--epochs", type=int)
     parser.add_argument("--steps-per-epoch", type=int)
     parser.add_argument("--num-train-negatives", type=int)
+    parser.add_argument("--context-mode", choices=("mixed", "target_only"))
+    parser.add_argument("--min-domain-sequence-length", type=int)
     parser.add_argument("--device")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--no-progress", action="store_true")
@@ -255,6 +257,15 @@ def main(argv: list[str] | None = None) -> int:
                         evaluation_batch_size=int(
                             config.get("evaluation_batch_size", 128)
                         ),
+                        context_mode=(
+                            args.context_mode
+                            or str(config.get("context_mode", "mixed"))
+                        ),
+                        min_domain_sequence_length=(
+                            args.min_domain_sequence_length
+                            if args.min_domain_sequence_length is not None
+                            else int(config.get("min_domain_sequence_length", 1))
+                        ),
                         bf16=bool(config.get("bf16", False)),
                         data_hash=data_hash,
                         force=args.force,
@@ -280,9 +291,13 @@ def main(argv: list[str] | None = None) -> int:
                     report: dict[str, object] = {
                         "base_checkpoint": str(base),
                         "config_hash": config_hash,
+                        "context_mode": settings.context_mode,
                         "decision": decision,
                         "domain": domain,
                         "method": method,
+                        "min_domain_sequence_length": (
+                            settings.min_domain_sequence_length
+                        ),
                         "num_train_negatives": settings.num_train_negatives,
                         "output_dir": str(output),
                         "pretrain_method": pretrain_method,

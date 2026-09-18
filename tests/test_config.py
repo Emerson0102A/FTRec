@@ -117,6 +117,27 @@ def test_production_configs_follow_gmflowrec_training_protocol() -> None:
         / "lora_all_embedding_multineg31.yaml"
     )["ranks"] == [5]
 
+    for name, context_mode, output_root in (
+        ("context_mixed_min5", "mixed", "runs-context-ablation/mixed-min5"),
+        (
+            "context_target_only_min5",
+            "target_only",
+            "runs-context-ablation/target-only-min5",
+        ),
+    ):
+        config = load_config(root / "configs" / "experiment" / f"{name}.yaml")
+        assert config["method"] == "lora_all_embedding"
+        assert config["base_root"] == "runs-lr1e-4"
+        assert config["output_root"] == output_root
+        assert config["pretrain_methods"] == ["joint_proportional"]
+        assert config["ranks"] == [5]
+        assert config["seeds"] == [42]
+        assert config["num_train_negatives"] == 31
+        assert config["lr"] == pytest.approx(0.0001)
+        assert config["embedding_lr"] == pytest.approx(0.0001)
+        assert config["context_mode"] == context_mode
+        assert config["min_domain_sequence_length"] == 5
+
     assert load_config(root / "configs" / "experiment" / "fullft.yaml")[
         "embedding_lr"
     ] == 0.001

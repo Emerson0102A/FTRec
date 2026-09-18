@@ -204,9 +204,12 @@ def _build_examples(
     maxlen: int,
     single_domain: bool,
     require_target_domain_history: bool = False,
+    min_domain_sequence_length: int = 1,
 ) -> list[TargetExample]:
     if maxlen < 1:
         raise ValueError("maxlen must be positive")
+    if min_domain_sequence_length < 1:
+        raise ValueError("min_domain_sequence_length must be positive")
     examples: list[TargetExample] = []
     skipped = 0
     next_id = 0
@@ -217,11 +220,17 @@ def _build_examples(
         ):
             if domain != target_domain or row_split != split:
                 continue
-            has_target_domain_history = any(
+            target_domain_history_length = sum(
                 prior_domain == target_domain
                 for prior_domain in record.domain_ids[:index]
             )
-            if require_target_domain_history and not has_target_domain_history:
+            sequence_is_too_short = (
+                target_domain_history_length + 1 < min_domain_sequence_length
+            )
+            target_history_is_missing = (
+                require_target_domain_history and target_domain_history_length == 0
+            )
+            if sequence_is_too_short or target_history_is_missing:
                 skipped += 1
                 continue
             if single_domain:
@@ -266,6 +275,7 @@ def build_mixed_examples(
     target_domain: int,
     maxlen: int,
     require_target_domain_history: bool = False,
+    min_domain_sequence_length: int = 1,
 ) -> list[TargetExample]:
     return _build_examples(
         store,
@@ -274,11 +284,17 @@ def build_mixed_examples(
         maxlen=maxlen,
         single_domain=False,
         require_target_domain_history=require_target_domain_history,
+        min_domain_sequence_length=min_domain_sequence_length,
     )
 
 
 def build_single_domain_examples(
-    store: SequenceStore, *, split: str, domain: int, maxlen: int
+    store: SequenceStore,
+    *,
+    split: str,
+    domain: int,
+    maxlen: int,
+    min_domain_sequence_length: int = 2,
 ) -> list[TargetExample]:
     return _build_examples(
         store,
@@ -287,4 +303,5 @@ def build_single_domain_examples(
         maxlen=maxlen,
         single_domain=True,
         require_target_domain_history=True,
+        min_domain_sequence_length=min_domain_sequence_length,
     )

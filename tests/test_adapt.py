@@ -115,6 +115,9 @@ def test_adaptation_run_writes_selected_checkpoint_and_result(
         payload["best_validation_metrics"]["NDCG@10"]
     )
     assert "initial_validation_metrics" in payload
+    assert payload["context_mode"] == "mixed"
+    assert payload["min_domain_sequence_length"] == 1
+    assert payload["num_examples"] == {"test": 1, "train": 1, "valid": 1}
     assert result.num_trainable_params > 0
     assert result.num_total_params >= result.num_trainable_params
     assert result.test_metrics["num_eval_users"] == 1
@@ -150,6 +153,46 @@ def test_adaptation_run_writes_selected_checkpoint_and_result(
     stderr = capsys.readouterr().err
     assert f"train {method} domain-0 seed-42" in stderr
     assert "100%" in stderr
+
+
+def test_target_only_adaptation_runs_with_filtered_context(
+    tmp_path: Path,
+) -> None:
+    from ftrec.training.adapt import AdaptSettings, train_adaptation
+
+    store, config, checkpoint = _fixture(tmp_path)
+    output = tmp_path / "target-only"
+    train_adaptation(
+        store,
+        config,
+        checkpoint,
+        AdaptSettings(
+            method="lora",
+            pretrain_method="joint",
+            domain=0,
+            output_dir=output,
+            rank=2,
+            alpha=2,
+            seed=42,
+            batch_size=1,
+            steps_per_epoch=1,
+            epochs=1,
+            patience=1,
+            lr=1e-2,
+            device="cpu",
+            evaluation_protocol="sampled",
+            num_eval_negatives=1,
+            context_mode="target_only",
+            min_domain_sequence_length=2,
+            data_hash="data-a",
+            progress=False,
+        ),
+    )
+
+    payload = json.loads((output / "result.json").read_text(encoding="utf-8"))
+    assert payload["context_mode"] == "target_only"
+    assert payload["min_domain_sequence_length"] == 2
+    assert payload["num_examples"] == {"test": 1, "train": 1, "valid": 1}
 
 
 @pytest.mark.parametrize("method", ("lora", "fullft"))
@@ -318,6 +361,47 @@ def test_adaptation_settings_accept_joint_proportional_backbone(tmp_path: Path) 
     assert settings.pretrain_method == "joint_proportional"
 
 
+def test_adaptation_settings_validate_context_controls(tmp_path: Path) -> None:
+    from ftrec.training.adapt import AdaptSettings
+
+    common = {
+        "method": "lora",
+        "pretrain_method": "joint_proportional",
+        "domain": 0,
+        "output_dir": tmp_path / "adapt",
+        "rank": 2,
+        "alpha": 2,
+    }
+    with pytest.raises(ValueError, match="context_mode"):
+        AdaptSettings(**common, context_mode="unknown")
+    with pytest.raises(ValueError, match="min_domain_sequence_length"):
+        AdaptSettings(**common, min_domain_sequence_length=0)
+
+
+def test_context_controls_change_adaptation_fingerprint(tmp_path: Path) -> None:
+    from ftrec.training.adapt import AdaptSettings, adapt_config_hash
+
+    _, config, _ = _fixture(tmp_path)
+    common = AdaptSettings(
+        method="lora",
+        pretrain_method="joint",
+        domain=0,
+        output_dir=tmp_path / "mixed",
+        rank=2,
+        alpha=2,
+    )
+
+    assert adapt_config_hash(config, common) != adapt_config_hash(
+        config,
+        replace(
+            common,
+            output_dir=tmp_path / "target-only",
+            context_mode="target_only",
+            min_domain_sequence_length=5,
+        ),
+    )
+
+
 def test_adapt_config_hash_ignores_output_control_fields(tmp_path: Path) -> None:
     from ftrec.training.adapt import AdaptSettings, adapt_config_hash
 
@@ -365,6 +449,8 @@ def test_legacy_lora_hash_omits_inapplicable_bottleneck_field(tmp_path: Path) ->
         "progress",
         "bottleneck_size",
         "num_train_negatives",
+        "context_mode",
+        "min_domain_sequence_length",
     ):
         legacy.pop(key)
 

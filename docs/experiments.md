@@ -151,6 +151,33 @@ all-linear LoRA rank 5，用于判断 FullFT 的增益是否来自商品表示�
 评测仍固定使用 999 个负样本。结果单独写入 `runs-multineg31/`，并在
 `result.json` 和汇总 CSV 中记录 `num_train_negatives: 31`，不会覆盖单负样本实验。
 
+## LoRA target-only context 对照
+
+这一组实验只改变 adaptation 阶段的输入历史，用来判断跨域 context 是否干扰
+目标域 LoRA。两边均沿用 `joint_proportional` 主干、all-linear LoRA rank 5、
+目标域 item embedding 残差、31 个训练负样本及 `1e-4` 学习率。
+
+为避免把用户筛选差异误判为 context 收益，mixed 和 target-only 两边都只保留
+“截至当前 target，目标域子序列长度至少为 5”的样本。`mixed-min5` 仍输入完整
+跨域历史；`target-only-min5` 从相同样本中删除非目标域物品。验证、测试和 epoch-0
+基线采用各自对应的 context，但两边使用相同用户 target 和固定评测候选集。
+
+```bash
+bash scripts/run_context_mixed_min5.sh --seed 42 --dry-run
+bash scripts/run_context_target_only_min5.sh --seed 42 --dry-run
+
+bash scripts/run_context_mixed_min5.sh --seed 42 \
+  2>&1 | tee logs/context-mixed-min5-seed-42.log
+bash scripts/run_context_target_only_min5.sh --seed 42 \
+  2>&1 | tee logs/context-target-only-min5-seed-42.log
+```
+
+两条正式命令可以放入两个 tmux 会话并行运行。结果分别写入
+`runs-context-ablation/mixed-min5/` 和
+`runs-context-ablation/target-only-min5/`。每个 `result.json` 都记录
+`context_mode`、`min_domain_sequence_length`、各 split 的保留样本数及过滤样本数，
+用于核对两个实验臂的 cohort 完全一致。
+
 ## 从 pilot 切换到正式 seed 42
 
 正式训练前先保留整个 pilot 目录，再让新的 100-epoch checkpoint 使用默认的
