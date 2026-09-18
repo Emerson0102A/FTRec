@@ -72,8 +72,11 @@ class AdaptSettings:
             raise ValueError(
                 "method must be lora, lora_all, houlsby, pfeiffer, or fullft"
             )
-        if self.pretrain_method not in {"joint", "pcgrad"}:
-            raise ValueError("pretrain_method must be 'joint' or 'pcgrad'")
+        if self.pretrain_method not in {"joint", "pcgrad", "joint_proportional"}:
+            raise ValueError(
+                "pretrain_method must be 'joint', 'pcgrad', or "
+                "'joint_proportional'"
+            )
         if self.domain < 0:
             raise ValueError("domain must be non-negative")
         if self.method in {"lora", "lora_all"}:

@@ -1,8 +1,8 @@
 processed_dir: data/processed/gmflowrec-amazon
-base_root: runs
-output_root: runs
+base_root: runs-lr1e-4
+output_root: runs-lr1e-4
 method: lora_all
-pretrain_methods: [joint, pcgrad]
+pretrain_methods: [joint_proportional]
 domains: [0, 1, 2, 3, 4]
 ranks: [3, 5]
 seeds: [42, 43, 44, 45, 46]
@@ -14,7 +14,7 @@ batch_size: 256
 steps_per_epoch: auto
 epochs: 100
 patience: 10
-lr: 0.001
+lr: 0.0001
 embedding_lr: null
 weight_decay: 0.0
 grad_clip_norm: 5.0

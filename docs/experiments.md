@@ -63,24 +63,25 @@ pilot 只用于筛选研究方向，不能替代多 seed 正式结论。需要�
 ## 参数匹配的 PEFT 诊断
 
 当 Q/V LoRA 与 FullFT 之间存在明显差距时，使用下面三组配置判断瓶颈来自
-LoRA 插入范围还是适配结构。所有方法复用相同 backbone、域内 target、混合历史、
-固定 999 个负样本和 epoch-0 checkpoint 选择规则：
+LoRA 插入范围还是适配结构。配置默认读取 `runs-lr1e-4` 中的
+`joint_proportional` backbone，并以 `1e-4` 进行适配；域内 target、混合历史、
+固定 999 个负样本和 epoch-0 checkpoint 选择规则保持不变：
 
 ```bash
-bash scripts/run_lora_all.sh --pretrain-method joint --seed 42 --dry-run
-bash scripts/run_houlsby.sh --pretrain-method joint --seed 42 --dry-run
-bash scripts/run_pfeiffer.sh --pretrain-method joint --seed 42 --dry-run
+bash scripts/run_lora_all.sh --pretrain-method joint_proportional --seed 42 --dry-run
+bash scripts/run_houlsby.sh --pretrain-method joint_proportional --seed 42 --dry-run
+bash scripts/run_pfeiffer.sh --pretrain-method joint_proportional --seed 42 --dry-run
 
-bash scripts/run_lora_all.sh --pretrain-method joint --seed 42
-bash scripts/run_houlsby.sh --pretrain-method joint --seed 42
-bash scripts/run_pfeiffer.sh --pretrain-method joint --seed 42
+bash scripts/run_lora_all.sh --pretrain-method joint_proportional --seed 42
+bash scripts/run_houlsby.sh --pretrain-method joint_proportional --seed 42
+bash scripts/run_pfeiffer.sh --pretrain-method joint_proportional --seed 42
 ```
 
 默认容量经过近似匹配：Q/V LoRA rank 8/16 分别约 4k/8k 参数；all-linear
 LoRA 使用 rank 3/5，Houlsby 使用 bottleneck 8/16，Pfeiffer 使用 bottleneck
 16/32。`lora_all` 同时适配 Q/K/V/O 与两层 FFN；Houlsby 在 attention 和 FFN
-后各放一个残差 bottleneck；Pfeiffer 只适配 FFN。先跑 Joint、seed 42，只有
-差异明确后再补 PCGrad 和其余 seeds。
+后各放一个残差 bottleneck；Pfeiffer 只适配 FFN。先跑
+Joint-proportional、seed 42，只有差异明确后再补其余 seeds。
 
 每个 `result.json` 和汇总 CSV 都记录 `target_modules`、`rank`、
 `bottleneck_size` 和实际可训练参数量，比较时优先使用实际参数量而不是只看

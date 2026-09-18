@@ -284,6 +284,21 @@ def test_adaptation_rejects_pretrain_method_mismatch(tmp_path: Path) -> None:
         )
 
 
+def test_adaptation_settings_accept_joint_proportional_backbone(tmp_path: Path) -> None:
+    from ftrec.training.adapt import AdaptSettings
+
+    settings = AdaptSettings(
+        method="lora_all",
+        pretrain_method="joint_proportional",
+        domain=0,
+        output_dir=tmp_path / "adapt",
+        rank=3,
+        alpha=3,
+    )
+
+    assert settings.pretrain_method == "joint_proportional"
+
+
 def test_adapt_config_hash_ignores_output_control_fields(tmp_path: Path) -> None:
     from ftrec.training.adapt import AdaptSettings, adapt_config_hash
 

@@ -354,6 +354,14 @@ def test_adapt_cli_exposes_parameter_efficient_methods(method: str) -> None:
     assert args.method == method
 
 
+def test_adapt_cli_accepts_lr1e4_joint_proportional_backbone() -> None:
+    from ftrec.cli.adapt import build_parser
+
+    args = build_parser().parse_args(["--pretrain-method", "joint_proportional"])
+
+    assert args.pretrain_method == "joint_proportional"
+
+
 @pytest.mark.parametrize(
     ("extra_args", "expected_runs", "expected_stages"),
     [

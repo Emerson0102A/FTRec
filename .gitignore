@@ -2,7 +2,14 @@ Dataset
 .worktrees/
 /data/processed/
 /data/MDSR-Amazon/
-/runs/
+# Keep heavyweight checkpoints and logs out of Git, while allowing the small
+# per-run metric payloads to be synchronized for analysis.
+/runs/**
+!/runs/**/
+!/runs/**/result.json
+/runs-*/**
+!/runs-*/**/
+!/runs-*/**/result.json
 /results/
 *.sqlite
 *.sqlite-wal

@@ -46,9 +46,6 @@ def test_production_configs_follow_gmflowrec_training_protocol() -> None:
         "joint",
         "pcgrad",
         "lora",
-        "lora_all",
-        "houlsby",
-        "pfeiffer",
         "fullft",
     ):
         config = load_config(root / "configs" / "experiment" / f"{name}.yaml")
@@ -57,6 +54,19 @@ def test_production_configs_follow_gmflowrec_training_protocol() -> None:
         assert config["steps_per_epoch"] == "auto"
         assert config["epochs"] == 100
         assert config["lr"] == 0.001
+        assert config["evaluation_protocol"] == "sampled"
+        assert config["num_eval_negatives"] == 999
+
+    for name in ("lora_all", "houlsby", "pfeiffer"):
+        config = load_config(root / "configs" / "experiment" / f"{name}.yaml")
+        assert config["processed_dir"] == "data/processed/gmflowrec-amazon"
+        assert config["base_root"] == "runs-lr1e-4"
+        assert config["output_root"] == "runs-lr1e-4"
+        assert config["pretrain_methods"] == ["joint_proportional"]
+        assert config["batch_size"] == 256
+        assert config["steps_per_epoch"] == "auto"
+        assert config["epochs"] == 100
+        assert config["lr"] == pytest.approx(0.0001)
         assert config["evaluation_protocol"] == "sampled"
         assert config["num_eval_negatives"] == 999
 

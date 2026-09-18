@@ -34,7 +34,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--method", choices=("lora", "lora_all", "houlsby", "pfeiffer", "fullft")
     )
-    parser.add_argument("--pretrain-method", choices=("joint", "pcgrad"))
+    parser.add_argument(
+        "--pretrain-method",
+        choices=("joint", "pcgrad", "joint_proportional"),
+    )
     parser.add_argument("--domain", type=int)
     parser.add_argument("--rank", type=int)
     parser.add_argument("--ranks", type=int, nargs="+")
