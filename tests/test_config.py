@@ -96,6 +96,8 @@ def test_production_configs_follow_gmflowrec_training_protocol() -> None:
     for name, method in (
         ("lora_all_multineg31", "lora_all"),
         ("fullft_multineg31", "fullft"),
+        ("embedding_multineg31", "embedding"),
+        ("lora_all_embedding_multineg31", "lora_all_embedding"),
     ):
         config = load_config(root / "configs" / "experiment" / f"{name}.yaml")
         assert config["method"] == method
@@ -105,6 +107,15 @@ def test_production_configs_follow_gmflowrec_training_protocol() -> None:
         assert config["seeds"] == [42]
         assert config["num_train_negatives"] == 31
         assert config["lr"] == pytest.approx(0.0001)
+        if method in {"embedding", "lora_all_embedding", "fullft"}:
+            assert config["embedding_lr"] == pytest.approx(0.0001)
+
+    assert load_config(
+        root
+        / "configs"
+        / "experiment"
+        / "lora_all_embedding_multineg31.yaml"
+    )["ranks"] == [5]
 
     assert load_config(root / "configs" / "experiment" / "fullft.yaml")[
         "embedding_lr"

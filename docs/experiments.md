@@ -134,13 +134,20 @@ sampled evaluation。正样本 BCE 与所有负样本 BCE 的均值各占一项�
 ```bash
 bash scripts/run_lora_all_multineg31.sh --seed 42 --dry-run
 bash scripts/run_fullft_multineg31.sh --seed 42 --dry-run
+bash scripts/run_embedding_multineg31.sh --seed 42 --dry-run
+bash scripts/run_lora_all_embedding_multineg31.sh --seed 42 --dry-run
 
 bash scripts/run_lora_all_multineg31.sh --seed 42
 bash scripts/run_fullft_multineg31.sh --seed 42
+bash scripts/run_embedding_multineg31.sh --seed 42
+bash scripts/run_lora_all_embedding_multineg31.sh --seed 42
 ```
 
 两组配置均读取 `runs-lr1e-4` 的 `joint_proportional` 主干，学习率为 `1e-4`；
 LoRA 使用 all-linear rank 5，FullFT 同时以 `1e-4` 更新 dense 参数与 embedding。
+`embedding` 只更新目标域商品残差，`lora_all_embedding` 同时更新该残差与
+all-linear LoRA rank 5，用于判断 FullFT 的增益是否来自商品表示及其与 Transformer
+的协同适配。
 评测仍固定使用 999 个负样本。结果单独写入 `runs-multineg31/`，并在
 `result.json` 和汇总 CSV 中记录 `num_train_negatives: 31`，不会覆盖单负样本实验。
 
