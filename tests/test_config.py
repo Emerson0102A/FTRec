@@ -82,6 +82,17 @@ def test_production_configs_follow_gmflowrec_training_protocol() -> None:
         root / "configs" / "experiment" / "lora_all_embedding.yaml"
     )["ranks"] == [5]
 
+    fullft_lr1e4 = load_config(
+        root / "configs" / "experiment" / "fullft_lr1e4.yaml"
+    )
+    assert fullft_lr1e4["method"] == "fullft"
+    assert fullft_lr1e4["base_root"] == "runs-lr1e-4"
+    assert fullft_lr1e4["output_root"] == "runs-lr1e-4"
+    assert fullft_lr1e4["pretrain_methods"] == ["joint_proportional"]
+    assert fullft_lr1e4["seeds"] == [42]
+    assert fullft_lr1e4["lr"] == pytest.approx(0.0001)
+    assert fullft_lr1e4["embedding_lr"] == pytest.approx(0.0001)
+
     assert load_config(root / "configs" / "experiment" / "fullft.yaml")[
         "embedding_lr"
     ] == 0.001

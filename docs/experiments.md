@@ -110,6 +110,20 @@ embedding 学习率均为 `1e-4`。`embedding` 只训练目标域商品的零初
 全域 embedding。`result.json` 额外记录 `target_embedding_rows`，用于核对各域
 实际参与适配的商品数量。
 
+## 低学习率 FullFT 对照
+
+如果 embedding 消融仍与未适配主干持平，使用下面的 FullFT 对照判断完整模型
+是否能够从相同的域内训练数据获得额外信号：
+
+```bash
+bash scripts/run_fullft_lr1e4.sh --seed 42 --dry-run
+bash scripts/run_fullft_lr1e4.sh --seed 42
+```
+
+该配置读取 `runs-lr1e-4` 中的 `joint_proportional` 主干，dense 参数和 item
+embedding 均使用 `1e-4`，只运行 seed 42。它与旧的 `configs/experiment/fullft.yaml`
+相互独立，不覆盖原来的 `lr=1e-3` FullFT 设计。
+
 ## 从 pilot 切换到正式 seed 42
 
 正式训练前先保留整个 pilot 目录，再让新的 100-epoch checkpoint 使用默认的
