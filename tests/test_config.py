@@ -62,13 +62,25 @@ def test_production_configs_follow_gmflowrec_training_protocol() -> None:
         assert config["processed_dir"] == "data/processed/gmflowrec-amazon"
         assert config["base_root"] == "runs-lr1e-4"
         assert config["output_root"] == "runs-lr1e-4"
-        assert config["pretrain_methods"] == ["joint_proportional"]
+        assert config["pretrain_methods"] == ["joint"]
         assert config["batch_size"] == 256
         assert config["steps_per_epoch"] == "auto"
         assert config["epochs"] == 100
         assert config["lr"] == pytest.approx(0.0001)
         assert config["evaluation_protocol"] == "sampled"
         assert config["num_eval_negatives"] == 999
+
+    for name in ("embedding", "lora_all_embedding"):
+        config = load_config(root / "configs" / "experiment" / f"{name}.yaml")
+        assert config["base_root"] == "runs-lr1e-4"
+        assert config["output_root"] == "runs-lr1e-4"
+        assert config["pretrain_methods"] == ["joint_proportional"]
+        assert config["seeds"] == [42]
+        assert config["lr"] == pytest.approx(0.0001)
+        assert config["embedding_lr"] == pytest.approx(0.0001)
+    assert load_config(
+        root / "configs" / "experiment" / "lora_all_embedding.yaml"
+    )["ranks"] == [5]
 
     assert load_config(root / "configs" / "experiment" / "fullft.yaml")[
         "embedding_lr"

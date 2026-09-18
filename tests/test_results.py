@@ -63,6 +63,30 @@ def test_result_schema_records_parameter_efficient_capacity(
     assert row.target_modules == "ffn.first,ffn.second"
 
 
+@pytest.mark.parametrize(
+    ("method", "rank"), (("embedding", None), ("lora_all_embedding", 5))
+)
+def test_result_schema_records_target_embedding_rows(
+    method: str, rank: int | None
+) -> None:
+    from ftrec.analysis.results import ResultRow
+
+    value = _row().to_dict()
+    value.update(
+        {
+            "adapt_method": method,
+            "lora_rank": rank,
+            "target_embedding_rows": 123,
+            "target_modules": ["target_item_embedding"],
+        }
+    )
+
+    row = ResultRow.from_dict(value)
+
+    assert row.target_embedding_rows == 123
+    assert row.lora_rank == rank
+
+
 def test_aggregation_reports_sample_std_over_seeds() -> None:
     from ftrec.analysis.results import aggregate_results
 
@@ -95,6 +119,34 @@ def test_macro_rows_exclude_domains_without_evaluable_users() -> None:
 
     assert macro.ndcg_at_10 == pytest.approx(0.3)
     assert macro.contributing_domains == 2
+
+
+def test_embedding_macro_combines_domains_with_different_catalog_sizes() -> None:
+    from ftrec.analysis.results import add_macro_rows
+
+    rows = (
+        replace(
+            _row(domain="Health", ndcg=0.2),
+            adapt_method="embedding",
+            target_embedding_rows=10,
+            num_trainable_params=40,
+            num_total_params=140,
+        ),
+        replace(
+            _row(domain="Beauty", ndcg=0.4),
+            adapt_method="embedding",
+            target_embedding_rows=20,
+            num_trainable_params=80,
+            num_total_params=180,
+        ),
+    )
+
+    macros = [row for row in add_macro_rows(rows) if row.domain == "Macro"]
+
+    assert len(macros) == 1
+    assert macros[0].ndcg_at_10 == pytest.approx(0.3)
+    assert macros[0].target_embedding_rows == 30
+    assert macros[0].num_trainable_params == 120
 
 
 @pytest.mark.parametrize(

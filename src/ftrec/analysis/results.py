@@ -38,6 +38,7 @@ class ResultRow:
     contributing_domains: int | None = None
     target_modules: str | None = None
     bottleneck_size: int | None = None
+    target_embedding_rows: int | None = None
 
     @classmethod
     def from_dict(cls, value: Mapping[str, object]) -> "ResultRow":
@@ -71,6 +72,9 @@ class ResultRow:
         bottleneck = value.get("bottleneck_size")
         if bottleneck in (None, "", "null"):
             bottleneck = None
+        embedding_rows = value.get("target_embedding_rows")
+        if embedding_rows in (None, "", "null"):
+            embedding_rows = None
         target_modules = value.get("target_modules")
         if isinstance(target_modules, (list, tuple)):
             target_modules = ",".join(str(item) for item in target_modules)
@@ -103,6 +107,9 @@ class ResultRow:
                 bottleneck_size=(
                     int(bottleneck) if bottleneck is not None else None
                 ),
+                target_embedding_rows=(
+                    int(embedding_rows) if embedding_rows is not None else None
+                ),
             )
         except (TypeError, ValueError) as error:
             raise ResultSchemaError(f"invalid result row: {error}") from error
@@ -112,8 +119,9 @@ class ResultRow:
     def validate(self) -> None:
         if self.evaluation_protocol not in {"full", "sampled"}:
             raise ResultSchemaError("evaluation_protocol must be full or sampled")
-        lora_methods = {"lora", "lora_all"}
+        lora_methods = {"lora", "lora_all", "lora_all_embedding"}
         adapter_methods = {"houlsby", "pfeiffer"}
+        embedding_methods = {"embedding", "lora_all_embedding"}
         if self.adapt_method in lora_methods and self.lora_rank is None:
             raise ResultSchemaError("LoRA result requires lora_rank")
         if self.adapt_method not in lora_methods and self.lora_rank is not None:
@@ -123,6 +131,15 @@ class ResultRow:
         if self.adapt_method not in adapter_methods and self.bottleneck_size is not None:
             raise ResultSchemaError(
                 "only bottleneck adapter results may contain bottleneck_size"
+            )
+        if self.adapt_method in embedding_methods and self.target_embedding_rows is None:
+            raise ResultSchemaError("embedding result requires target_embedding_rows")
+        if (
+            self.adapt_method not in embedding_methods
+            and self.target_embedding_rows is not None
+        ):
+            raise ResultSchemaError(
+                "only embedding adaptation may contain target_embedding_rows"
             )
         if self.num_trainable_params < 0 or self.num_total_params < 1:
             raise ResultSchemaError("parameter counts must be non-negative and nonzero")
@@ -140,6 +157,7 @@ class ResultRow:
             self.adapt_method,
             self.lora_rank,
             self.bottleneck_size,
+            self.target_embedding_rows,
             self.split,
             self.evaluation_protocol,
         )
@@ -165,6 +183,7 @@ class ResultRow:
             "contributing_domains": self.contributing_domains,
             "target_modules": self.target_modules,
             "bottleneck_size": self.bottleneck_size,
+            "target_embedding_rows": self.target_embedding_rows,
         }
 
 
@@ -182,6 +201,7 @@ class SummaryRow:
     seeds: int
     target_modules: str | None = None
     bottleneck_size: int | None = None
+    target_embedding_rows: int | None = None
 
     def to_dict(self) -> dict[str, object]:
         return self.__dict__.copy()
@@ -227,6 +247,11 @@ def add_macro_rows(rows: Iterable[ResultRow]) -> tuple[ResultRow, ...]:
         if not contributing:
             continue
         first = contributing[0]
+        embedding_rows = (
+            sum(row.target_embedding_rows or 0 for row in contributing)
+            if first.target_embedding_rows is not None
+            else None
+        )
         macros.append(
             replace(
                 first,
@@ -236,6 +261,17 @@ def add_macro_rows(rows: Iterable[ResultRow]) -> tuple[ResultRow, ...]:
                 num_eval_users=sum(row.num_eval_users for row in contributing),
                 num_skipped_users=sum(row.num_skipped_users for row in values),
                 contributing_domains=len(contributing),
+                num_trainable_params=(
+                    sum(row.num_trainable_params for row in contributing)
+                    if embedding_rows is not None
+                    else first.num_trainable_params
+                ),
+                num_total_params=(
+                    sum(row.num_total_params for row in contributing)
+                    if embedding_rows is not None
+                    else first.num_total_params
+                ),
+                target_embedding_rows=embedding_rows,
             )
         )
     return original + tuple(sorted(macros, key=lambda row: row.key))
@@ -253,6 +289,7 @@ def aggregate_results(rows: Iterable[ResultRow]) -> tuple[SummaryRow, ...]:
             row.evaluation_protocol,
             row.target_modules,
             row.bottleneck_size,
+            row.target_embedding_rows,
         )
         grouped.setdefault(key, []).append(row)
     result: list[SummaryRow] = []
@@ -274,6 +311,7 @@ def aggregate_results(rows: Iterable[ResultRow]) -> tuple[SummaryRow, ...]:
                 evaluation_protocol,
                 target_modules,
                 bottleneck_size,
+                target_embedding_rows,
             ) = key
             result.append(
                 SummaryRow(
@@ -289,6 +327,7 @@ def aggregate_results(rows: Iterable[ResultRow]) -> tuple[SummaryRow, ...]:
                     seeds=len(observations),
                     target_modules=target_modules,
                     bottleneck_size=bottleneck_size,
+                    target_embedding_rows=target_embedding_rows,
                 )
             )
     return tuple(
@@ -300,6 +339,7 @@ def aggregate_results(rows: Iterable[ResultRow]) -> tuple[SummaryRow, ...]:
                 row.adapt_method,
                 row.lora_rank or 0,
                 row.bottleneck_size or 0,
+                row.target_embedding_rows or 0,
                 row.metric,
             ),
         )
@@ -350,6 +390,7 @@ def collect_result_rows(root: str | Path) -> tuple[ResultRow, ...]:
             rank = value.get("rank")
             bottleneck_size = value.get("bottleneck_size")
             target_modules = value.get("target_modules")
+            target_embedding_rows = value.get("target_embedding_rows")
         elif value.get("method") in {
             "single",
             "single_mixed",
@@ -365,6 +406,7 @@ def collect_result_rows(root: str | Path) -> tuple[ResultRow, ...]:
             rank = None
             bottleneck_size = None
             target_modules = None
+            target_embedding_rows = None
         else:
             continue
         for domain, metrics in metrics_by_domain.items():
@@ -376,6 +418,7 @@ def collect_result_rows(root: str | Path) -> tuple[ResultRow, ...]:
                 "lora_rank": rank,
                 "bottleneck_size": bottleneck_size,
                 "target_modules": target_modules,
+                "target_embedding_rows": target_embedding_rows,
                 "split": "test",
                 "evaluation_protocol": metrics["evaluation_protocol"],
                 "HR@10": metrics["HR@10"],

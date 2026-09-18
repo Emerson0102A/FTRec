@@ -20,13 +20,21 @@ from ftrec.models.sasrec import SASRec, SASRecConfig
 from ftrec.training.checkpoint import save_checkpoint
 
 
-ADAPT_METHODS = ("lora", "lora_all", "houlsby", "pfeiffer", "fullft")
+ADAPT_METHODS = (
+    "lora",
+    "lora_all",
+    "lora_all_embedding",
+    "embedding",
+    "houlsby",
+    "pfeiffer",
+    "fullft",
+)
 
 
 def _capacity_kwargs(method: str) -> dict[str, int | None]:
     return {
-        "rank": 2 if method in {"lora", "lora_all"} else None,
-        "alpha": 2 if method in {"lora", "lora_all"} else None,
+        "rank": 2 if method in {"lora", "lora_all", "lora_all_embedding"} else None,
+        "alpha": 2 if method in {"lora", "lora_all", "lora_all_embedding"} else None,
         "bottleneck_size": 2 if method in {"houlsby", "pfeiffer"} else None,
     }
 
@@ -121,11 +129,22 @@ def test_adaptation_run_writes_selected_checkpoint_and_result(
         assert any("ffn.first" in name for name in result.trainable_names)
         assert payload["target_modules"][-1] == "ffn.second"
         assert result.num_trainable_params < result.num_total_params
+    elif method == "lora_all_embedding":
+        assert any(".lora_" in name for name in result.trainable_names)
+        assert "item_embedding_adapter.delta.weight" in result.trainable_names
+        assert payload["target_modules"][-1] == "target_item_embedding"
+        assert payload["target_embedding_rows"] == 5
+        assert result.num_trainable_params < result.num_total_params
+    elif method == "embedding":
+        assert result.trainable_names == ("item_embedding_adapter.delta.weight",)
+        assert payload["target_modules"] == ["target_item_embedding"]
+        assert payload["target_embedding_rows"] == 5
+        assert result.num_trainable_params < result.num_total_params
     elif method in {"houlsby", "pfeiffer"}:
         assert all("_adapter." in name for name in result.trainable_names)
         assert payload["bottleneck_size"] == 2
         assert result.num_trainable_params < result.num_total_params
-    else:
+    elif method == "fullft":
         assert result.num_trainable_params == result.num_total_params
         assert all(".lora_" not in name for name in result.trainable_names)
     stderr = capsys.readouterr().err

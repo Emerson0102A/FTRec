@@ -32,7 +32,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--base-checkpoint", type=Path)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument(
-        "--method", choices=("lora", "lora_all", "houlsby", "pfeiffer", "fullft")
+        "--method",
+        choices=(
+            "lora",
+            "lora_all",
+            "lora_all_embedding",
+            "embedding",
+            "houlsby",
+            "pfeiffer",
+            "fullft",
+        ),
     )
     parser.add_argument(
         "--pretrain-method",

@@ -345,7 +345,9 @@ def test_adaptation_rank_subset_limits_the_matrix(tmp_path: Path) -> None:
     assert [run["rank"] for run in payload["runs"]] == [1, 2, 4]
 
 
-@pytest.mark.parametrize("method", ("lora_all", "houlsby", "pfeiffer"))
+@pytest.mark.parametrize(
+    "method", ("lora_all", "lora_all_embedding", "embedding", "houlsby", "pfeiffer")
+)
 def test_adapt_cli_exposes_parameter_efficient_methods(method: str) -> None:
     from ftrec.cli.adapt import build_parser
 

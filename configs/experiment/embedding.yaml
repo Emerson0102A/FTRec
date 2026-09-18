@@ -1,11 +1,10 @@
 processed_dir: data/processed/gmflowrec-amazon
 base_root: runs-lr1e-4
 output_root: runs-lr1e-4
-method: houlsby
-pretrain_methods: [joint]
+method: embedding
+pretrain_methods: [joint_proportional]
 domains: [0, 1, 2, 3, 4]
-bottleneck_sizes: [8, 16]
-seeds: [42, 43, 44, 45, 46]
+seeds: [42]
 device: cuda
 bf16: true
 progress: true
@@ -14,7 +13,7 @@ steps_per_epoch: auto
 epochs: 100
 patience: 10
 lr: 0.0001
-embedding_lr: null
+embedding_lr: 0.0001
 weight_decay: 0.0
 grad_clip_norm: 5.0
 evaluation_protocol: sampled

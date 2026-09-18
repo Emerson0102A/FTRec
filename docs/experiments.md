@@ -63,29 +63,52 @@ pilot 只用于筛选研究方向，不能替代多 seed 正式结论。需要�
 ## 参数匹配的 PEFT 诊断
 
 当 Q/V LoRA 与 FullFT 之间存在明显差距时，使用下面三组配置判断瓶颈来自
-LoRA 插入范围还是适配结构。配置默认读取 `runs-lr1e-4` 中的
-`joint_proportional` backbone，并以 `1e-4` 进行适配；域内 target、混合历史、
+LoRA 插入范围还是适配结构。配置默认读取 `runs-lr1e-4` 中以 `1e-4` 训练的
+标准 `joint` backbone，并以 `1e-4` 进行适配；域内 target、混合历史、
 固定 999 个负样本和 epoch-0 checkpoint 选择规则保持不变：
 
 ```bash
-bash scripts/run_lora_all.sh --pretrain-method joint_proportional --seed 42 --dry-run
-bash scripts/run_houlsby.sh --pretrain-method joint_proportional --seed 42 --dry-run
-bash scripts/run_pfeiffer.sh --pretrain-method joint_proportional --seed 42 --dry-run
+bash scripts/run_lora_all.sh --pretrain-method joint --seed 42 --dry-run
+bash scripts/run_houlsby.sh --pretrain-method joint --seed 42 --dry-run
+bash scripts/run_pfeiffer.sh --pretrain-method joint --seed 42 --dry-run
 
-bash scripts/run_lora_all.sh --pretrain-method joint_proportional --seed 42
-bash scripts/run_houlsby.sh --pretrain-method joint_proportional --seed 42
-bash scripts/run_pfeiffer.sh --pretrain-method joint_proportional --seed 42
+bash scripts/run_lora_all.sh --pretrain-method joint --seed 42
+bash scripts/run_houlsby.sh --pretrain-method joint --seed 42
+bash scripts/run_pfeiffer.sh --pretrain-method joint --seed 42
 ```
 
 默认容量经过近似匹配：Q/V LoRA rank 8/16 分别约 4k/8k 参数；all-linear
 LoRA 使用 rank 3/5，Houlsby 使用 bottleneck 8/16，Pfeiffer 使用 bottleneck
 16/32。`lora_all` 同时适配 Q/K/V/O 与两层 FFN；Houlsby 在 attention 和 FFN
-后各放一个残差 bottleneck；Pfeiffer 只适配 FFN。先跑
-Joint-proportional、seed 42，只有差异明确后再补其余 seeds。
+后各放一个残差 bottleneck；Pfeiffer 只适配 FFN。先跑标准 Joint、seed 42，
+只有差异明确后再补其余 seeds。`joint_proportional` 应作为独立扩展实验，避免
+把主干学习率和采样策略同时改变。
 
 每个 `result.json` 和汇总 CSV 都记录 `target_modules`、`rank`、
 `bottleneck_size` 和实际可训练参数量，比较时优先使用实际参数量而不是只看
 rank 或 bottleneck 名义值。
+
+## 目标域 item embedding 消融
+
+当 Transformer 侧的 LoRA/Adapter 与未适配主干基本持平时，使用下面两组实验
+判断瓶颈是否位于商品表示和打分空间：
+
+```bash
+bash scripts/run_embedding.sh --seed 42 --dry-run
+bash scripts/run_lora_all_embedding.sh --seed 42 --dry-run
+
+bash scripts/run_embedding.sh --seed 42
+bash scripts/run_lora_all_embedding.sh --seed 42
+```
+
+两组配置均读取 `runs-lr1e-4` 中的 `joint_proportional` 主干，适配学习率和
+embedding 学习率均为 `1e-4`。`embedding` 只训练目标域商品的零初始化残差表；
+`lora_all_embedding` 在此基础上同时训练 all-linear LoRA rank 5。非目标域商品
+映射到固定的零残差，因此即使历史序列跨域，也不会修改其他域的商品表示。
+
+残差表在 epoch 0 与原主干完全等价，checkpoint 只保存目标域残差而不复制整张
+全域 embedding。`result.json` 额外记录 `target_embedding_rows`，用于核对各域
+实际参与适配的商品数量。
 
 ## 从 pilot 切换到正式 seed 42
 

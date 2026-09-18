@@ -24,6 +24,10 @@ from ftrec.data.sampling import (
 )
 from ftrec.evaluation.ranking import evaluate_model
 from ftrec.models.adapters import adapter_parameter_names, inject_adapters
+from ftrec.models.embedding_adapter import (
+    inject_target_embedding_adapter,
+    target_embedding_parameter_names,
+)
 from ftrec.models.lora import (
     LORA_SCOPES,
     inject_lora,
@@ -68,9 +72,17 @@ class AdaptSettings:
     progress: bool = True
 
     def __post_init__(self) -> None:
-        if self.method not in {"lora", "lora_all", "houlsby", "pfeiffer", "fullft"}:
+        if self.method not in {
+            "lora",
+            "lora_all",
+            "lora_all_embedding",
+            "embedding",
+            "houlsby",
+            "pfeiffer",
+            "fullft",
+        }:
             raise ValueError(
-                "method must be lora, lora_all, houlsby, pfeiffer, or fullft"
+                "unsupported adaptation method"
             )
         if self.pretrain_method not in {"joint", "pcgrad", "joint_proportional"}:
             raise ValueError(
@@ -79,7 +91,7 @@ class AdaptSettings:
             )
         if self.domain < 0:
             raise ValueError("domain must be non-negative")
-        if self.method in {"lora", "lora_all"}:
+        if self.method in {"lora", "lora_all", "lora_all_embedding"}:
             if self.rank is None or self.rank < 1:
                 raise ValueError("LoRA adaptation requires a positive rank")
             if self.alpha is None or self.alpha <= 0:
@@ -119,11 +131,18 @@ class AdaptRunResult:
 
 
 def is_lora_method(method: str) -> bool:
-    return method in {"lora", "lora_all"}
+    return method in {"lora", "lora_all", "lora_all_embedding"}
 
 
 def is_parameter_efficient_method(method: str) -> bool:
-    return method in {"lora", "lora_all", "houlsby", "pfeiffer"}
+    return method in {
+        "lora",
+        "lora_all",
+        "lora_all_embedding",
+        "embedding",
+        "houlsby",
+        "pfeiffer",
+    }
 
 
 def target_modules_for_method(method: str) -> tuple[str, ...]:
@@ -131,6 +150,10 @@ def target_modules_for_method(method: str) -> tuple[str, ...]:
         return LORA_SCOPES["qv"]
     if method == "lora_all":
         return LORA_SCOPES["all_linear"]
+    if method == "lora_all_embedding":
+        return (*LORA_SCOPES["all_linear"], "target_item_embedding")
+    if method == "embedding":
+        return ("target_item_embedding",)
     if method == "houlsby":
         return ("attention_adapter", "ffn_adapter")
     if method == "pfeiffer":
@@ -250,11 +273,33 @@ def train_adaptation(
         seed_offset=20_000,
         sampled_candidates=test_candidates,
     )
+    target_embedding_rows: int | None = None
     if is_lora_method(settings.method):
         assert settings.rank is not None and settings.alpha is not None
         scope = "qv" if settings.method == "lora" else "all_linear"
         inject_lora(model, settings.rank, settings.alpha, scope=scope)
-        trainable_names = lora_parameter_names(model)
+        if settings.method == "lora_all_embedding":
+            embedding_adapter = inject_target_embedding_adapter(
+                model,
+                store.items_by_domain[settings.domain],
+                freeze_existing=False,
+            )
+            target_embedding_rows = embedding_adapter.num_target_items
+            trainable_names = tuple(
+                name
+                for name, parameter in model.named_parameters()
+                if parameter.requires_grad
+            )
+            if not target_embedding_parameter_names(model):
+                raise RuntimeError("target embedding adapter is not trainable")
+            if any(
+                ".lora_" not in name
+                and not name.startswith("item_embedding_adapter.")
+                for name in trainable_names
+            ):
+                raise RuntimeError("unexpected parameters are trainable")
+        else:
+            trainable_names = lora_parameter_names(model)
         expected_names = tuple(
             name
             for name, parameter in model.named_parameters()
@@ -262,6 +307,21 @@ def train_adaptation(
         )
         if trainable_names != expected_names:
             raise RuntimeError("non-LoRA parameters are trainable")
+    elif settings.method == "embedding":
+        embedding_adapter = inject_target_embedding_adapter(
+            model,
+            store.items_by_domain[settings.domain],
+            freeze_existing=True,
+        )
+        target_embedding_rows = embedding_adapter.num_target_items
+        trainable_names = target_embedding_parameter_names(model)
+        expected_names = tuple(
+            name
+            for name, parameter in model.named_parameters()
+            if parameter.requires_grad
+        )
+        if trainable_names != expected_names:
+            raise RuntimeError("non-embedding parameters are trainable")
     elif settings.method in {"houlsby", "pfeiffer"}:
         assert settings.bottleneck_size is not None
         inject_adapters(
@@ -330,10 +390,18 @@ def train_adaptation(
         "config_hash": config_hash,
         "data_hash": settings.data_hash,
         "domain": settings.domain,
+        "embedding_lr": settings.embedding_lr,
+        "lr": settings.lr,
         "method": settings.method,
         "pretrain_method": settings.pretrain_method,
         "rank": settings.rank,
         "seed": settings.seed,
+        "target_embedding_rows": target_embedding_rows,
+        "target_embedding_params": (
+            target_embedding_rows * model_config.hidden_size
+            if target_embedding_rows is not None
+            else None
+        ),
         "target_modules": target_modules_for_method(settings.method),
     }
     stopping = EarlyStopping(settings.patience)

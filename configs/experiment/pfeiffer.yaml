@@ -2,7 +2,7 @@ processed_dir: data/processed/gmflowrec-amazon
 base_root: runs-lr1e-4
 output_root: runs-lr1e-4
 method: pfeiffer
-pretrain_methods: [joint_proportional]
+pretrain_methods: [joint]
 domains: [0, 1, 2, 3, 4]
 bottleneck_sizes: [16, 32]
 seeds: [42, 43, 44, 45, 46]

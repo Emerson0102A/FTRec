@@ -9,6 +9,9 @@ from torch import nn
 
 from .attention import SASRecBlock
 
+if False:  # pragma: no cover - imported only for static type checkers
+    from .embedding_adapter import TargetEmbeddingAdapter
+
 
 @dataclass(frozen=True)
 class SASRecConfig:
@@ -40,6 +43,7 @@ class SASRec(nn.Module):
             padding_idx=0,
             sparse=True,
         )
+        self.item_embedding_adapter: TargetEmbeddingAdapter | None = None
         self.position_embedding = nn.Embedding(
             config.maxlen + 1, config.hidden_size, padding_idx=0
         )
@@ -73,7 +77,10 @@ class SASRec(nn.Module):
             raise ValueError("sequence exceeds configured maxlen")
         valid = item_ids.ne(0)
         positions = valid.long().cumsum(dim=1) * valid.long()
-        outputs = self.item_embedding(item_ids) * (self.config.hidden_size**0.5)
+        item_vectors = self.item_embedding(item_ids)
+        if self.item_embedding_adapter is not None:
+            item_vectors = item_vectors + self.item_embedding_adapter(item_ids)
+        outputs = item_vectors * (self.config.hidden_size**0.5)
         outputs = outputs + self.position_embedding(positions)
         outputs = self.embedding_dropout(outputs)
         outputs = outputs.masked_fill(~valid.unsqueeze(-1), 0.0)
@@ -93,6 +100,8 @@ class SASRec(nn.Module):
     def score(self, contexts: torch.Tensor, candidate_ids: torch.Tensor) -> torch.Tensor:
         states = self.final_state(contexts)
         candidates = self.item_embedding(candidate_ids)
+        if self.item_embedding_adapter is not None:
+            candidates = candidates + self.item_embedding_adapter(candidate_ids)
         if candidates.ndim == 2:
             return states @ candidates.transpose(0, 1)
         if candidates.ndim == 3:
@@ -100,15 +109,27 @@ class SASRec(nn.Module):
         raise ValueError("candidate_ids must have shape [candidates] or [batch, candidates]")
 
     def scoring_weight(self) -> torch.Tensor:
-        return self.item_embedding.weight
+        if self.item_embedding_adapter is None:
+            return self.item_embedding.weight
+        item_ids = torch.arange(
+            self.config.num_items + 1, device=self.item_embedding.weight.device
+        )
+        return self.item_embedding.weight + self.item_embedding_adapter(item_ids)
 
     def optimizer_parameter_groups(self) -> dict[str, list[nn.Parameter]]:
+        sparse_names = {"item_embedding.weight"}
+        if self.item_embedding_adapter is not None:
+            sparse_names.add("item_embedding_adapter.delta.weight")
         return {
-            "sparse": [self.item_embedding.weight],
+            "sparse": [
+                parameter
+                for name, parameter in self.named_parameters()
+                if name in sparse_names
+            ],
             "dense": [
                 parameter
                 for name, parameter in self.named_parameters()
-                if name != "item_embedding.weight"
+                if name not in sparse_names
             ],
         }
 
