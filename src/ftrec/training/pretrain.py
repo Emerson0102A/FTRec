@@ -342,10 +342,20 @@ def _task_loss(
         dtype=torch.bfloat16,
         enabled=bf16,
     ):
-        logits = model.score(contexts, candidate_ids)
-        negative_logits = logits[:, 1:]
-        positive_logits = logits[:, :1].expand_as(negative_logits)
-        return sampled_bce_loss(positive_logits, negative_logits)
+        component_scorer = getattr(model, "score_components", None)
+        logits_by_tower = (
+            component_scorer(contexts, candidate_ids)
+            if callable(component_scorer)
+            else (model.score(contexts, candidate_ids),)
+        )
+        losses: list[torch.Tensor] = []
+        for logits in logits_by_tower:
+            negative_logits = logits[:, 1:]
+            positive_logits = logits[:, :1].expand_as(negative_logits)
+            losses.append(sampled_bce_loss(positive_logits, negative_logits))
+        # MyRec supervises title and attribute towers independently and sums
+        # their BCE losses. Single-tower models naturally contribute one term.
+        return torch.stack(losses).sum()
 
 
 def run_multitask_step(

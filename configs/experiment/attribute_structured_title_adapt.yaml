@@ -1,7 +1,7 @@
 processed_dir: data/processed/gmflowrec-amazon
-base_root: runs-attributes/structured-title
-output_root: runs-attributes/structured-title
-method: lora_all_content
+base_root: runs-attributes/structured-title-dual
+output_root: runs-attributes/structured-title-dual
+method: lora_all
 pretrain_methods: [joint_proportional]
 domains: [0, 1, 2, 3, 4]
 ranks: [5]

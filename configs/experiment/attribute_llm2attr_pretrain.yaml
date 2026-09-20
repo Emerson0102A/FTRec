@@ -1,5 +1,5 @@
 processed_dir: data/processed/gmflowrec-amazon
-output_root: runs-attributes/llm2attr
+output_root: runs-attributes/llm2attr-dual
 method: joint_proportional
 domain: null
 seed: 42

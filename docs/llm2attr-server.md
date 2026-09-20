@@ -50,13 +50,17 @@ MODE=full BATCH_SIZE=32 bash scripts/run_llm2attr_export.sh
 降回 16。输出目录已存在时脚本会拒绝覆盖，除非在底层命令中显式使用
 `--force`。
 
+主实验固定为 3 个属性，因为现有 LLM2Attr checkpoint 就是按 3 个属性训练的。
+代码支持其他数量，但必须显式传入 `--allow-ood-attribute-count`，并作为 OOD
+消融单独报告，不能与主实验混在一起。
+
 可覆盖的路径变量包括 `FTREC_ROOT`、`LLM2ATTR_ROOT`、`MDSR_SOURCE_DIR`、
 `AMAZON_META_DIR`、`ATTRIBUTE_CATALOG` 与 `LLM2ATTR_OUTPUT`。
 
 ## Structured-LLM 对照组
 
 先运行只读取标题的公平对照；它与 LLM2Attr 使用完全相同的 catalog、item ID、
-属性数量、artifact 格式和下游融合层：
+属性数量和 artifact 格式：
 
 ```bash
 bash scripts/run_structured_attribute_export.sh
@@ -71,10 +75,19 @@ MODE=full EVIDENCE=enhanced BATCH_SIZE=16 \
   bash scripts/run_structured_attribute_export.sh
 ```
 
-## 训练公平对照
+## 2×2 训练消融
 
 两个主实验都沿用 `data/processed/gmflowrec-amazon` 中已有的 MDSR
-train/valid/test 划分，不重新划分。先分别预训练：
+train/valid/test 划分，不重新划分，也都不使用 ID embedding。每种属性提取器
+运行两种推荐架构：
+
+- `dual`：严格沿用 MyRec。Title 和 Attr 各自经过一套完整且参数独立的
+  SASRec；训练损失是两塔 BCE 之和，推理分数是
+  `0.5 * title_score + 0.5 * attr_score`。
+- `fused`：Title 与 Attr 先融合成一个纯内容 item embedding，只经过一套
+  SASRec。
+
+先运行四个预训练：
 
 ```bash
 ftrec-pretrain \
@@ -84,9 +97,17 @@ ftrec-pretrain \
 ftrec-pretrain \
   --config configs/experiment/attribute_structured_title_pretrain.yaml \
   --model-config configs/model/sasrec_structured_title.yaml
+
+ftrec-pretrain \
+  --config configs/experiment/attribute_llm2attr_fused_pretrain.yaml \
+  --model-config configs/model/sasrec_llm2attr_fused.yaml
+
+ftrec-pretrain \
+  --config configs/experiment/attribute_structured_title_fused_pretrain.yaml \
+  --model-config configs/model/sasrec_structured_title_fused.yaml
 ```
 
-再分别运行五个目标域的 LoRA + 内容融合微调：
+再分别运行五个目标域的 LoRA 微调：
 
 ```bash
 ftrec-adapt \
@@ -96,9 +117,18 @@ ftrec-adapt \
 ftrec-adapt \
   --config configs/experiment/attribute_structured_title_adapt.yaml \
   --model-config configs/model/sasrec_structured_title.yaml
+
+ftrec-adapt \
+  --config configs/experiment/attribute_llm2attr_fused_adapt.yaml \
+  --model-config configs/model/sasrec_llm2attr_fused.yaml
+
+ftrec-adapt \
+  --config configs/experiment/attribute_structured_title_fused_adapt.yaml \
+  --model-config configs/model/sasrec_structured_title_fused.yaml
 ```
 
-`lora_all_content` 只训练 Transformer 的 LoRA 参数和共享内容融合层，不更新
-LLM，也不更新完整 ID embedding 表。两种提取器的推荐模型结构和训练超参数完全
-相同。建议先完成 seed 42 的可行性实验，再扩为相同的 5 个 seeds，并额外报告按
-训练频次分桶的 head/medium/tail 指标。
+适配阶段使用 `lora_all`：ContentEncoder（包括 Title/Attr adapter 与属性选择器）
+全部冻结，只训练 SASRec 各线性层中的 LoRA 参数。双塔有两套 SASRec，所以同一
+rank 下 LoRA 参数量约为单塔的两倍；结果表必须同时报告总参数量和可训练参数量，
+不能把这项架构差异隐藏起来。建议先完成 seed 42 的可行性实验，再扩为相同的 5 个
+seeds，并额外报告按训练频次分桶的 head/medium/tail 指标。

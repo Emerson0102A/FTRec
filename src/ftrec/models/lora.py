@@ -98,15 +98,17 @@ def inject_lora(
         raise ValueError(
             f"unknown LoRA scope {scope!r}; expected one of {sorted(LORA_SCOPES)}"
         ) from error
-    for block in model.blocks:
-        for path in targets:
-            parent, attribute = _parent_and_attribute(block, path)
-            base = getattr(parent, attribute)
-            if isinstance(base, LoRALinear):
-                raise ValueError("LoRA has already been injected")
-            if not isinstance(base, nn.Linear):
-                raise TypeError(f"LoRA target {path!r} is not nn.Linear")
-            setattr(parent, attribute, LoRALinear(base, rank, alpha))
+    block_groups = model.lora_block_groups()
+    for blocks in block_groups:
+        for block in blocks:
+            for path in targets:
+                parent, attribute = _parent_and_attribute(block, path)
+                base = getattr(parent, attribute)
+                if isinstance(base, LoRALinear):
+                    raise ValueError("LoRA has already been injected")
+                if not isinstance(base, nn.Linear):
+                    raise TypeError(f"LoRA target {path!r} is not nn.Linear")
+                setattr(parent, attribute, LoRALinear(base, rank, alpha))
     freeze_for_lora(model)
     return model
 

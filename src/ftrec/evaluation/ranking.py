@@ -12,13 +12,6 @@ from ftrec.data.datasets import TargetExample
 from .metrics import RankingMetrics, RankingMetricsAtKs
 
 
-def _embed_items(model: object, item_ids: torch.Tensor) -> torch.Tensor:
-    embed = getattr(model, "embed_items", None)
-    if callable(embed):
-        return embed(item_ids)
-    return model.item_embedding(item_ids)
-
-
 def rank_ground_truth_chunked(
     model: object,
     *,
@@ -87,9 +80,9 @@ def evaluate_model(
         disable=not progress,
     )
     try:
-        supports_batched_scoring = hasattr(model, "final_state") and hasattr(
-            model, "item_embedding"
-        )
+        supports_batched_scoring = callable(
+            getattr(model, "prepare_scoring", None)
+        ) and callable(getattr(model, "score_prepared", None))
         if protocol == "sampled" and supports_batched_scoring:
             assert sampled_candidates is not None
             _evaluate_sampled_batched(
@@ -179,13 +172,11 @@ def _evaluate_sampled_batched(
                     dtype=torch.long,
                     device=device,
                 )
-                states = model.final_state(contexts)
-                scores = torch.einsum(
-                    "bd,bcd->bc", states, _embed_items(model, candidate_ids)
-                )
-                target_scores = torch.einsum(
-                    "bd,bd->b", states, _embed_items(model, target_ids)
-                )
+                prepared = model.prepare_scoring(contexts)
+                scores = model.score_prepared(prepared, candidate_ids)
+                target_scores = model.score_prepared(
+                    prepared, target_ids.unsqueeze(1)
+                ).squeeze(1)
                 ahead = scores > target_scores.unsqueeze(1)
                 tied_ahead = (scores == target_scores.unsqueeze(1)) & (
                     candidate_ids < target_ids.unsqueeze(1)
@@ -232,18 +223,16 @@ def _evaluate_sampled_batched(
                 dtype=torch.long,
                 device=device,
             )
-            states = model.final_state(contexts)
-            scores = torch.einsum(
-                "bd,bcd->bc", states, _embed_items(model, candidate_ids)
-            )
+            prepared = model.prepare_scoring(contexts)
+            scores = model.score_prepared(prepared, candidate_ids)
             target_ids = torch.tensor(
                 [example.positive_item for example in batch],
                 dtype=torch.long,
                 device=device,
             )
-            target_scores = torch.einsum(
-                "bd,bd->b", states, _embed_items(model, target_ids)
-            )
+            target_scores = model.score_prepared(
+                prepared, target_ids.unsqueeze(1)
+            ).squeeze(1)
             ahead = scores > target_scores.unsqueeze(1)
             tied_ahead = (scores == target_scores.unsqueeze(1)) & (
                 candidate_ids < target_ids.unsqueeze(1)
@@ -286,22 +275,20 @@ def _evaluate_full_batched(
                     dtype=torch.long,
                     device=device,
                 )
-                states = model.final_state(contexts)
+                prepared = model.prepare_scoring(contexts)
                 target_ids = torch.tensor(
                     [example.positive_item for example in batch],
                     dtype=torch.long,
                     device=device,
                 )
-                target_scores = torch.einsum(
-                    "bd,bd->b", states, _embed_items(model, target_ids)
-                )
+                target_scores = model.score_prepared(
+                    prepared, target_ids.unsqueeze(1)
+                ).squeeze(1)
                 ranks = torch.zeros(len(batch), dtype=torch.long, device=device)
                 for start in range(0, len(catalog), chunk_size):
                     chunk = catalog[start : start + chunk_size]
                     identifiers = torch.tensor(chunk, dtype=torch.long, device=device)
-                    scores = torch.einsum(
-                        "bd,cd->bc", states, _embed_items(model, identifiers)
-                    )
+                    scores = model.score_prepared(prepared, identifiers)
                     eligible = torch.ones(
                         (len(batch), len(chunk)), dtype=torch.bool, device=device
                     )

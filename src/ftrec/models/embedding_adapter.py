@@ -58,6 +58,10 @@ def inject_target_embedding_adapter(
     *,
     freeze_existing: bool,
 ) -> TargetEmbeddingAdapter:
+    if model.item_embedding is None:
+        raise ValueError(
+            "target ID-embedding adaptation is unavailable for content-only models"
+        )
     if model.item_embedding_adapter is not None:
         raise ValueError("target embedding adapter has already been injected")
     if freeze_existing:

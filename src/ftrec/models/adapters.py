@@ -65,23 +65,24 @@ def inject_adapters(
         raise ValueError(
             f"unknown adapter method {method!r}; expected one of {ADAPTER_METHODS}"
         )
-    for block in model.blocks:
-        if block.attention_adapter is not None or block.ffn_adapter is not None:
-            raise ValueError("an adapter has already been injected")
-        reference = block.attention.q_proj.weight
-        if method == "houlsby":
-            block.attention_adapter = BottleneckAdapter(
+    for blocks in model.lora_block_groups():
+        for block in blocks:
+            if block.attention_adapter is not None or block.ffn_adapter is not None:
+                raise ValueError("an adapter has already been injected")
+            reference = block.attention.q_proj.weight
+            if method == "houlsby":
+                block.attention_adapter = BottleneckAdapter(
+                    model.config.hidden_size,
+                    bottleneck_size,
+                    device=reference.device,
+                    dtype=reference.dtype,
+                )
+            block.ffn_adapter = BottleneckAdapter(
                 model.config.hidden_size,
                 bottleneck_size,
                 device=reference.device,
                 dtype=reference.dtype,
             )
-        block.ffn_adapter = BottleneckAdapter(
-            model.config.hidden_size,
-            bottleneck_size,
-            device=reference.device,
-            dtype=reference.dtype,
-        )
     freeze_for_adapter(model)
     return model
 

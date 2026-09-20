@@ -349,7 +349,6 @@ def test_adaptation_rank_subset_limits_the_matrix(tmp_path: Path) -> None:
     "method",
     (
         "lora_all",
-        "lora_all_content",
         "lora_all_embedding",
         "embedding",
         "houlsby",

@@ -135,6 +135,7 @@ def export_llm2attr(args: argparse.Namespace) -> Path:
                 "llm2attr_root": str(checkpoints.root), "processed_items": processed,
                 "max_length": args.max_length, "torch_dtype": args.torch_dtype,
                 "attention": args.attention, "batch_size": args.batch_size,
+                "allow_ood_attribute_count": args.allow_ood_attribute_count,
             },
         )
         run.complete({"provider": "llm2attr", "processed_items": processed, "total_items": item_count})
@@ -150,6 +151,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mntp-checkpoint", type=Path)
     parser.add_argument("--attribute-checkpoint", type=Path)
     parser.add_argument("--attribute-count", type=int, default=3)
+    parser.add_argument(
+        "--allow-ood-attribute-count",
+        action="store_true",
+        help=(
+            "allow a count other than the checkpoint's three-attribute "
+            "training format; report such exports as out-of-distribution"
+        ),
+    )
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--max-length", type=int, default=128)
     parser.add_argument("--max-items", type=int)
@@ -161,6 +170,11 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if min(args.batch_size, args.attribute_count, args.max_length) < 1:
         parser.error("batch size, attribute count, and max length must be positive")
+    if args.attribute_count != 3 and not args.allow_ood_attribute_count:
+        parser.error(
+            "the supplied LLM2Attr checkpoint was trained for three attributes; "
+            "pass --allow-ood-attribute-count to run an explicit OOD ablation"
+        )
     if args.max_items is not None and args.max_items < 1:
         parser.error("--max-items must be positive")
     return args

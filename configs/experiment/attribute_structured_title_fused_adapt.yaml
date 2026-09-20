@@ -1,6 +1,6 @@
 processed_dir: data/processed/gmflowrec-amazon
-base_root: runs-attributes/llm2attr-dual
-output_root: runs-attributes/llm2attr-dual
+base_root: runs-attributes/structured-title-fused
+output_root: runs-attributes/structured-title-fused
 method: lora_all
 pretrain_methods: [joint_proportional]
 domains: [0, 1, 2, 3, 4]
