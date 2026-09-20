@@ -55,6 +55,7 @@ def attribute_prompt(title: str, mask_token: str, count: int) -> str:
 def _load_model(args: argparse.Namespace) -> tuple[Any, Any, Any, Any]:
     try:
         import torch
+        import torch.distributed.tensor  # PEFT 0.18.1 compatibility
     except ImportError as exc:
         raise RuntimeError("LLM2Attr export requires PyTorch") from exc
     ensure_peft_dtensor_namespace(torch)
