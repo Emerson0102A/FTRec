@@ -80,6 +80,9 @@ def evaluate_model(
         disable=not progress,
     )
     try:
+        prepare_cache = getattr(model, "prepare_evaluation_cache", None)
+        if callable(prepare_cache):
+            prepare_cache(chunk_size=chunk_size)
         supports_batched_scoring = callable(
             getattr(model, "prepare_scoring", None)
         ) and callable(getattr(model, "score_prepared", None))

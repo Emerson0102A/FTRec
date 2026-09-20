@@ -704,38 +704,44 @@ def _evaluate_domains(
     | None = None,
 ) -> dict[int, dict[str, float | int | str]]:
     metrics: dict[int, dict[str, float | int | str]] = {}
-    for domain, examples in sorted(examples_by_domain.items()):
-        sampled = None
-        if settings.evaluation_protocol == "sampled":
-            sampled = (
-                sampled_candidates_by_domain[domain]
-                if sampled_candidates_by_domain is not None
-                else _sampled_candidates(
-                    # This fallback is retained for callers that do not prepare
-                    # candidates up front; production passes the resolved map.
-                    # Synthetic stores have no processed directory and use the
-                    # deterministic in-memory recipe.
-                    SequenceStore((), dict(items_by_domain)),
-                    examples,
-                    split="valid" if seed_offset == 10_000 else "test",
-                    domain=domain,
-                    count=settings.num_eval_negatives,
-                    evaluation_seed=settings.evaluation_seed,
-                    split_offset=seed_offset,
+    was_training = model.training
+    model.eval()
+    try:
+        for domain, examples in sorted(examples_by_domain.items()):
+            sampled = None
+            if settings.evaluation_protocol == "sampled":
+                sampled = (
+                    sampled_candidates_by_domain[domain]
+                    if sampled_candidates_by_domain is not None
+                    else _sampled_candidates(
+                        # This fallback is retained for callers that do not prepare
+                        # candidates up front; production passes the resolved map.
+                        # Synthetic stores have no processed directory and use the
+                        # deterministic in-memory recipe.
+                        SequenceStore((), dict(items_by_domain)),
+                        examples,
+                        split="valid" if seed_offset == 10_000 else "test",
+                        domain=domain,
+                        count=settings.num_eval_negatives,
+                        evaluation_seed=settings.evaluation_seed,
+                        split_offset=seed_offset,
+                    )
                 )
+            metrics[domain] = evaluate_model(
+                model,
+                examples,
+                items_by_domain,
+                protocol=settings.evaluation_protocol,
+                sampled_candidates=sampled,
+                chunk_size=settings.evaluation_chunk_size,
+                batch_size=settings.evaluation_batch_size,
+                device=settings.device,
+                progress=settings.progress,
+                description=f"evaluate domain-{domain}",
             )
-        metrics[domain] = evaluate_model(
-            model,
-            examples,
-            items_by_domain,
-            protocol=settings.evaluation_protocol,
-            sampled_candidates=sampled,
-            chunk_size=settings.evaluation_chunk_size,
-            batch_size=settings.evaluation_batch_size,
-            device=settings.device,
-            progress=settings.progress,
-            description=f"evaluate domain-{domain}",
-        )
+    finally:
+        if was_training:
+            model.train()
     return metrics
 
 

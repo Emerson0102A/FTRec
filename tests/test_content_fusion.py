@@ -142,6 +142,32 @@ def test_lora_freezes_content_encoders_and_dual_has_two_tower_adapters(tmp_path)
     assert count_trainable_parameters(dual) == 2 * count_trainable_parameters(fused)
 
 
+def test_evaluation_cache_reuses_catalog_item_representations(tmp_path):
+    model = _model(tmp_path, "content_fused").eval()
+    assert model.fused_tower is not None
+    model.prepare_evaluation_cache(chunk_size=2)
+    cache = model.fused_tower._evaluation_item_cache
+    assert cache is not None
+    assert cache.shape == (5, 4)
+
+    contexts = torch.tensor([[0, 1, 2]])
+    prepared = model.prepare_scoring(contexts)
+    original_forward = model.fused_tower.item_encoder.forward
+
+    def fail_if_reencoded(_item_ids):
+        raise AssertionError("candidate content was re-encoded despite the cache")
+
+    model.fused_tower.item_encoder.forward = fail_if_reencoded
+    try:
+        scores = model.score_prepared(prepared, torch.tensor([[3, 1]]))
+    finally:
+        model.fused_tower.item_encoder.forward = original_forward
+
+    assert scores.shape == (1, 2)
+    model.train()
+    assert model.fused_tower._evaluation_item_cache is None
+
+
 def test_dual_tower_training_sums_independent_bce_losses():
     class TwoTowerScores(nn.Module):
         def __init__(self) -> None:

@@ -65,6 +65,7 @@ class _ContentSASRecTower(nn.Module):
         super().__init__()
         self.config = config
         self.item_encoder = item_encoder
+        self._evaluation_item_cache: torch.Tensor | None = None
         self.position_embedding = nn.Embedding(
             config.maxlen + 1, config.hidden_size, padding_idx=0
         )
@@ -74,6 +75,36 @@ class _ContentSASRecTower(nn.Module):
             for _ in range(config.num_blocks)
         )
         self.final_norm = nn.LayerNorm(config.hidden_size, eps=1e-8)
+
+    def prepare_evaluation_cache(self, *, chunk_size: int = 4096) -> None:
+        """Encode the catalog once for deterministic evaluation scoring."""
+
+        if self.training:
+            raise RuntimeError("evaluation cache requires eval mode")
+        if self._evaluation_item_cache is not None:
+            return
+        if chunk_size < 1:
+            raise ValueError("evaluation cache chunk_size must be positive")
+        device = self.position_embedding.weight.device
+        cache: torch.Tensor | None = None
+        with torch.no_grad():
+            for start in range(0, self.config.num_items + 1, chunk_size):
+                stop = min(start + chunk_size, self.config.num_items + 1)
+                item_ids = torch.arange(start, stop, device=device)
+                encoded = self.item_encoder(item_ids)
+                if cache is None:
+                    cache = torch.empty(
+                        (self.config.num_items + 1, encoded.shape[-1]),
+                        dtype=encoded.dtype,
+                        device=encoded.device,
+                    )
+                cache[start:stop].copy_(encoded)
+        if cache is None:  # pragma: no cover - num_items is validated positive
+            raise RuntimeError("failed to construct evaluation item cache")
+        self._evaluation_item_cache = cache
+
+    def clear_evaluation_cache(self) -> None:
+        self._evaluation_item_cache = None
 
     def encode(self, item_ids: torch.Tensor) -> torch.Tensor:
         if item_ids.ndim != 2:
@@ -106,7 +137,11 @@ class _ContentSASRecTower(nn.Module):
     def score_prepared(
         self, states: torch.Tensor, candidate_ids: torch.Tensor
     ) -> torch.Tensor:
-        candidates = self.item_encoder(candidate_ids)
+        candidates = (
+            self._evaluation_item_cache[candidate_ids]
+            if self._evaluation_item_cache is not None
+            else self.item_encoder(candidate_ids)
+        )
         if candidates.ndim == 2:
             return states @ candidates.transpose(0, 1)
         if candidates.ndim == 3:
@@ -169,6 +204,25 @@ class SASRec(nn.Module):
     @property
     def is_content_model(self) -> bool:
         return self.config.item_embedding_mode != "id"
+
+    def prepare_evaluation_cache(self, *, chunk_size: int = 4096) -> None:
+        if self.config.item_embedding_mode == "content_dual":
+            assert self.title_tower is not None and self.attribute_tower is not None
+            self.title_tower.prepare_evaluation_cache(chunk_size=chunk_size)
+            self.attribute_tower.prepare_evaluation_cache(chunk_size=chunk_size)
+        elif self.config.item_embedding_mode == "content_fused":
+            assert self.fused_tower is not None
+            self.fused_tower.prepare_evaluation_cache(chunk_size=chunk_size)
+
+    def clear_evaluation_cache(self) -> None:
+        for tower in (self.title_tower, self.attribute_tower, self.fused_tower):
+            if tower is not None:
+                tower.clear_evaluation_cache()
+
+    def train(self, mode: bool = True) -> SASRec:
+        if mode:
+            self.clear_evaluation_cache()
+        return super().train(mode)
 
     def reset_parameters(self) -> None:
         for module in self.modules():
