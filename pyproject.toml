@@ -27,6 +27,10 @@ ftrec-adapt = "ftrec.cli.adapt:main"
 ftrec-analyze = "ftrec.cli.analyze:main"
 ftrec-pilot = "ftrec.cli.pilot:main"
 ftrec-smoke = "ftrec.cli.smoke:main"
+ftrec-attribute-catalog = "ftrec.attributes.catalog:main"
+ftrec-llm2attr-check = "ftrec.attributes.runtime:main"
+ftrec-llm2attr-export = "ftrec.attributes.llm2attr:main"
+ftrec-structured-attribute-export = "ftrec.attributes.structured:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

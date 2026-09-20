@@ -33,6 +33,10 @@ from ftrec.models.embedding_adapter import (
     inject_target_embedding_adapter,
     target_embedding_parameter_names,
 )
+from ftrec.models.content_fusion import (
+    content_fusion_parameter_names,
+    unfreeze_content_fusion,
+)
 from ftrec.models.lora import (
     LORA_SCOPES,
     inject_lora,
@@ -83,6 +87,7 @@ class AdaptSettings:
         if self.method not in {
             "lora",
             "lora_all",
+            "lora_all_content",
             "lora_all_embedding",
             "embedding",
             "houlsby",
@@ -99,7 +104,12 @@ class AdaptSettings:
             )
         if self.domain < 0:
             raise ValueError("domain must be non-negative")
-        if self.method in {"lora", "lora_all", "lora_all_embedding"}:
+        if self.method in {
+            "lora",
+            "lora_all",
+            "lora_all_content",
+            "lora_all_embedding",
+        }:
             if self.rank is None or self.rank < 1:
                 raise ValueError("LoRA adaptation requires a positive rank")
             if self.alpha is None or self.alpha <= 0:
@@ -145,13 +155,19 @@ class AdaptRunResult:
 
 
 def is_lora_method(method: str) -> bool:
-    return method in {"lora", "lora_all", "lora_all_embedding"}
+    return method in {
+        "lora",
+        "lora_all",
+        "lora_all_content",
+        "lora_all_embedding",
+    }
 
 
 def is_parameter_efficient_method(method: str) -> bool:
     return method in {
         "lora",
         "lora_all",
+        "lora_all_content",
         "lora_all_embedding",
         "embedding",
         "houlsby",
@@ -164,6 +180,8 @@ def target_modules_for_method(method: str) -> tuple[str, ...]:
         return LORA_SCOPES["qv"]
     if method == "lora_all":
         return LORA_SCOPES["all_linear"]
+    if method == "lora_all_content":
+        return (*LORA_SCOPES["all_linear"], "content_fusion")
     if method == "lora_all_embedding":
         return (*LORA_SCOPES["all_linear"], "target_item_embedding")
     if method == "embedding":
@@ -336,6 +354,21 @@ def train_adaptation(
             if any(
                 ".lora_" not in name
                 and not name.startswith("item_embedding_adapter.")
+                for name in trainable_names
+            ):
+                raise RuntimeError("unexpected parameters are trainable")
+        elif settings.method == "lora_all_content":
+            unfreeze_content_fusion(model)
+            trainable_names = tuple(
+                name
+                for name, parameter in model.named_parameters()
+                if parameter.requires_grad
+            )
+            if not content_fusion_parameter_names(model):
+                raise RuntimeError("content fusion parameters are not trainable")
+            if any(
+                ".lora_" not in name
+                and not name.startswith("content_fusion.")
                 for name in trainable_names
             ):
                 raise RuntimeError("unexpected parameters are trainable")

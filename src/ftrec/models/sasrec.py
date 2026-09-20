@@ -8,6 +8,7 @@ import torch
 from torch import nn
 
 from .attention import SASRecBlock
+from .content_fusion import ContentFusion
 
 if False:  # pragma: no cover - imported only for static type checkers
     from .embedding_adapter import TargetEmbeddingAdapter
@@ -21,6 +22,8 @@ class SASRecConfig:
     num_heads: int = 2
     dropout: float = 0.2
     maxlen: int = 50
+    attribute_artifact: str | None = None
+    attribute_use_title: bool = True
 
     def __post_init__(self) -> None:
         if self.num_items < 1 or self.hidden_size < 1 or self.num_blocks < 1:
@@ -44,6 +47,17 @@ class SASRec(nn.Module):
             sparse=True,
         )
         self.item_embedding_adapter: TargetEmbeddingAdapter | None = None
+        self.content_fusion = (
+            ContentFusion(
+                num_items=config.num_items,
+                hidden_size=config.hidden_size,
+                artifact_dir=config.attribute_artifact,
+                dropout=config.dropout,
+                use_title=config.attribute_use_title,
+            )
+            if config.attribute_artifact is not None
+            else None
+        )
         self.position_embedding = nn.Embedding(
             config.maxlen + 1, config.hidden_size, padding_idx=0
         )
@@ -70,6 +84,14 @@ class SASRec(nn.Module):
                 nn.init.ones_(module.weight)
                 nn.init.zeros_(module.bias)
 
+    def embed_items(self, item_ids: torch.Tensor) -> torch.Tensor:
+        item_vectors = self.item_embedding(item_ids)
+        if self.item_embedding_adapter is not None:
+            item_vectors = item_vectors + self.item_embedding_adapter(item_ids)
+        if self.content_fusion is not None:
+            item_vectors = self.content_fusion(item_ids, item_vectors)
+        return item_vectors
+
     def encode(self, item_ids: torch.Tensor) -> torch.Tensor:
         if item_ids.ndim != 2:
             raise ValueError("item_ids must have shape [batch, length]")
@@ -77,9 +99,7 @@ class SASRec(nn.Module):
             raise ValueError("sequence exceeds configured maxlen")
         valid = item_ids.ne(0)
         positions = valid.long().cumsum(dim=1) * valid.long()
-        item_vectors = self.item_embedding(item_ids)
-        if self.item_embedding_adapter is not None:
-            item_vectors = item_vectors + self.item_embedding_adapter(item_ids)
+        item_vectors = self.embed_items(item_ids)
         outputs = item_vectors * (self.config.hidden_size**0.5)
         outputs = outputs + self.position_embedding(positions)
         outputs = self.embedding_dropout(outputs)
@@ -99,9 +119,7 @@ class SASRec(nn.Module):
 
     def score(self, contexts: torch.Tensor, candidate_ids: torch.Tensor) -> torch.Tensor:
         states = self.final_state(contexts)
-        candidates = self.item_embedding(candidate_ids)
-        if self.item_embedding_adapter is not None:
-            candidates = candidates + self.item_embedding_adapter(candidate_ids)
+        candidates = self.embed_items(candidate_ids)
         if candidates.ndim == 2:
             return states @ candidates.transpose(0, 1)
         if candidates.ndim == 3:
@@ -109,12 +127,12 @@ class SASRec(nn.Module):
         raise ValueError("candidate_ids must have shape [candidates] or [batch, candidates]")
 
     def scoring_weight(self) -> torch.Tensor:
-        if self.item_embedding_adapter is None:
+        if self.item_embedding_adapter is None and self.content_fusion is None:
             return self.item_embedding.weight
         item_ids = torch.arange(
             self.config.num_items + 1, device=self.item_embedding.weight.device
         )
-        return self.item_embedding.weight + self.item_embedding_adapter(item_ids)
+        return self.embed_items(item_ids)
 
     def optimizer_parameter_groups(self) -> dict[str, list[nn.Parameter]]:
         sparse_names = {"item_embedding.weight"}
@@ -138,6 +156,8 @@ class SASRec(nn.Module):
             "item_embedding": ("item_embedding.weight",),
             "position_embedding": ("position_embedding.weight",),
         }
+        if self.content_fusion is not None:
+            groups["content_fusion"] = ("content_fusion",)
         for index in range(len(self.blocks)):
             # LoRA changes the projection weight matrices, not their biases.
             query = f"blocks.{index}.attention.q_proj.weight"

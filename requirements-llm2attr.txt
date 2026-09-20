@@ -1,0 +1,6 @@
+# Install after the CUDA-enabled PyTorch environment is already working.
+transformers>=4.46,<5
+peft==0.18.1
+llm2vec>=0.2.3,<0.4
+accelerate>=1.2,<2
+safetensors>=0.4,<1

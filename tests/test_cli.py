@@ -346,7 +346,15 @@ def test_adaptation_rank_subset_limits_the_matrix(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "method", ("lora_all", "lora_all_embedding", "embedding", "houlsby", "pfeiffer")
+    "method",
+    (
+        "lora_all",
+        "lora_all_content",
+        "lora_all_embedding",
+        "embedding",
+        "houlsby",
+        "pfeiffer",
+    ),
 )
 def test_adapt_cli_exposes_parameter_efficient_methods(method: str) -> None:
     from ftrec.cli.adapt import build_parser

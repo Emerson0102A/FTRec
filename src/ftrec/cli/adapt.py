@@ -36,6 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=(
             "lora",
             "lora_all",
+            "lora_all_content",
             "lora_all_embedding",
             "embedding",
             "houlsby",

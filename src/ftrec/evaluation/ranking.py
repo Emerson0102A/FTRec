@@ -12,6 +12,13 @@ from ftrec.data.datasets import TargetExample
 from .metrics import RankingMetrics, RankingMetricsAtKs
 
 
+def _embed_items(model: object, item_ids: torch.Tensor) -> torch.Tensor:
+    embed = getattr(model, "embed_items", None)
+    if callable(embed):
+        return embed(item_ids)
+    return model.item_embedding(item_ids)
+
+
 def rank_ground_truth_chunked(
     model: object,
     *,
@@ -174,10 +181,10 @@ def _evaluate_sampled_batched(
                 )
                 states = model.final_state(contexts)
                 scores = torch.einsum(
-                    "bd,bcd->bc", states, model.item_embedding(candidate_ids)
+                    "bd,bcd->bc", states, _embed_items(model, candidate_ids)
                 )
                 target_scores = torch.einsum(
-                    "bd,bd->b", states, model.item_embedding(target_ids)
+                    "bd,bd->b", states, _embed_items(model, target_ids)
                 )
                 ahead = scores > target_scores.unsqueeze(1)
                 tied_ahead = (scores == target_scores.unsqueeze(1)) & (
@@ -227,7 +234,7 @@ def _evaluate_sampled_batched(
             )
             states = model.final_state(contexts)
             scores = torch.einsum(
-                "bd,bcd->bc", states, model.item_embedding(candidate_ids)
+                "bd,bcd->bc", states, _embed_items(model, candidate_ids)
             )
             target_ids = torch.tensor(
                 [example.positive_item for example in batch],
@@ -235,7 +242,7 @@ def _evaluate_sampled_batched(
                 device=device,
             )
             target_scores = torch.einsum(
-                "bd,bd->b", states, model.item_embedding(target_ids)
+                "bd,bd->b", states, _embed_items(model, target_ids)
             )
             ahead = scores > target_scores.unsqueeze(1)
             tied_ahead = (scores == target_scores.unsqueeze(1)) & (
@@ -286,14 +293,14 @@ def _evaluate_full_batched(
                     device=device,
                 )
                 target_scores = torch.einsum(
-                    "bd,bd->b", states, model.item_embedding(target_ids)
+                    "bd,bd->b", states, _embed_items(model, target_ids)
                 )
                 ranks = torch.zeros(len(batch), dtype=torch.long, device=device)
                 for start in range(0, len(catalog), chunk_size):
                     chunk = catalog[start : start + chunk_size]
                     identifiers = torch.tensor(chunk, dtype=torch.long, device=device)
                     scores = torch.einsum(
-                        "bd,cd->bc", states, model.item_embedding(identifiers)
+                        "bd,cd->bc", states, _embed_items(model, identifiers)
                     )
                     eligible = torch.ones(
                         (len(batch), len(chunk)), dtype=torch.bool, device=device
