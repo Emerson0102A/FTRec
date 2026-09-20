@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .checkpoints import resolve_checkpoint_paths
-from .llm2attr import DEFAULT_SERVER_ROOT
+from .llm2attr import DEFAULT_SERVER_ROOT, ensure_peft_dtensor_namespace
 
 
 REQUIRED = (
@@ -90,6 +90,12 @@ def run_preflight(args: argparse.Namespace) -> dict[str, Any]:
                 f"runtime; installed version is {actual_version}"
             )
     if not missing:
+        try:
+            import torch
+
+            ensure_peft_dtensor_namespace(torch)
+        except (ImportError, RuntimeError) as exc:
+            errors.append(f"PEFT/PyTorch DTensor compatibility check failed: {exc}")
         for distribution, module in REQUIRED:
             try:
                 importlib.import_module(module)

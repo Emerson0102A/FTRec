@@ -1,4 +1,5 @@
 import gzip
+import importlib.util
 import json
 import pickle
 
@@ -7,6 +8,7 @@ import pytest
 
 from ftrec.attributes.catalog import build_catalog
 from ftrec.attributes.checkpoints import resolve_checkpoint_paths
+from ftrec.attributes.llm2attr import ensure_peft_dtensor_namespace
 from ftrec.attributes.runtime import PINNED_RUNTIME, recommended_batch_size
 
 
@@ -57,6 +59,15 @@ def test_llm2attr_runtime_versions_match_upstream_constraint():
         "peft": "0.18.1",
         "llm2vec": "0.2.3",
     }
+
+
+def test_peft_dtensor_namespace_is_materialized_before_adapter_injection():
+    import torch
+
+    ensure_peft_dtensor_namespace(torch)
+
+    if importlib.util.find_spec("torch.distributed.tensor") is not None:
+        assert hasattr(torch.distributed, "tensor")
 
 
 def test_catalog_keeps_explicit_one_based_item_ids(tmp_path):

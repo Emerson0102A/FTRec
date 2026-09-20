@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import importlib
 import json
 import sys
 from pathlib import Path
@@ -17,6 +18,29 @@ from .provider_utils import batched, iter_catalog, load_catalog_manifest, move_t
 
 
 DEFAULT_SERVER_ROOT = Path("/root/autodl-tmp/FTRec/LLM2Attr")
+
+
+def ensure_peft_dtensor_namespace(torch: Any) -> None:
+    """Expose the lazy DTensor submodule before PEFT 0.18.1 inspects it.
+
+    Some PyTorch builds ship ``torch.distributed.tensor`` without importing it
+    into the parent namespace. PEFT 0.18.1 detects the module but then accesses
+    it as an already-populated attribute while injecting LoRA layers.
+    """
+
+    distributed = getattr(torch, "distributed", None)
+    if distributed is None or hasattr(distributed, "tensor"):
+        return
+    try:
+        importlib.import_module("torch.distributed.tensor")
+    except ModuleNotFoundError:
+        # Older builds without DTensor are handled by PEFT's own feature check.
+        return
+    if not hasattr(distributed, "tensor"):
+        raise RuntimeError(
+            "torch.distributed.tensor was imported but is absent from the "
+            "torch.distributed namespace"
+        )
 
 
 def attribute_prompt(title: str, mask_token: str, count: int) -> str:
@@ -33,6 +57,7 @@ def _load_model(args: argparse.Namespace) -> tuple[Any, Any, Any, Any]:
         import torch
     except ImportError as exc:
         raise RuntimeError("LLM2Attr export requires PyTorch") from exc
+    ensure_peft_dtensor_namespace(torch)
     checkpoints = resolve_checkpoint_paths(
         args.llm2attr_root,
         mntp_checkpoint=args.mntp_checkpoint,
