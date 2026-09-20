@@ -7,7 +7,7 @@ import pytest
 
 from ftrec.attributes.catalog import build_catalog
 from ftrec.attributes.checkpoints import resolve_checkpoint_paths
-from ftrec.attributes.runtime import recommended_batch_size
+from ftrec.attributes.runtime import PINNED_RUNTIME, recommended_batch_size
 
 
 def _touch(root, relative):
@@ -49,6 +49,14 @@ def test_memory_based_batch_recommendation_is_conservative():
     assert recommended_batch_size(80) == 32
     assert recommended_batch_size(24) == 16
     assert recommended_batch_size(16) == 8
+
+
+def test_llm2attr_runtime_versions_match_upstream_constraint():
+    assert PINNED_RUNTIME == {
+        "transformers": "4.44.2",
+        "peft": "0.18.1",
+        "llm2vec": "0.2.3",
+    }
 
 
 def test_catalog_keeps_explicit_one_based_item_ids(tmp_path):

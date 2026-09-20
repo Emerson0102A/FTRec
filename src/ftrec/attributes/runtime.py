@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import importlib.util
 import json
 import os
@@ -19,6 +20,12 @@ REQUIRED = (
     ("llm2vec", "llm2vec"), ("accelerate", "accelerate"),
     ("safetensors", "safetensors"),
 )
+
+PINNED_RUNTIME = {
+    "transformers": "4.44.2",
+    "peft": "0.18.1",
+    "llm2vec": "0.2.3",
+}
 
 
 def _packages() -> tuple[dict[str, str], list[str]]:
@@ -75,6 +82,22 @@ def run_preflight(args: argparse.Namespace) -> dict[str, Any]:
     result["packages"] = installed
     if missing:
         errors.append("missing Python packages: " + ", ".join(missing))
+    for package, expected_version in PINNED_RUNTIME.items():
+        actual_version = installed.get(package)
+        if actual_version is not None and actual_version != expected_version:
+            errors.append(
+                f"{package} must be {expected_version} for this LLM2Attr "
+                f"runtime; installed version is {actual_version}"
+            )
+    if not missing:
+        for distribution, module in REQUIRED:
+            try:
+                importlib.import_module(module)
+            except Exception as exc:
+                errors.append(
+                    f"cannot import {distribution} {installed.get(distribution)}: "
+                    f"{type(exc).__name__}: {exc}"
+                )
     try:
         import torch
 

@@ -17,6 +17,10 @@ pip install -r requirements-llm2attr.txt
 bash scripts/check_llm2attr_environment.sh
 ```
 
+依赖组合固定为 `transformers==4.44.2`、`llm2vec==0.2.3` 和
+`peft==0.18.1`。`llm2vec 0.2.3` 不兼容 Transformers 4.46 以上版本，
+不要单独升级 Transformers。安装完成后运行 `python -m pip check`，再执行预检。
+
 预检会检查 CUDA、BF16、依赖、checkpoint 完整性，并通过
 `HF_ENDPOINT=https://hf-mirror.com` 验证 `Qwen/Qwen2.5-0.5B`。
 

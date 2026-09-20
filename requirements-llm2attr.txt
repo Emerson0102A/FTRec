@@ -1,6 +1,9 @@
 # Install after the CUDA-enabled PyTorch environment is already working.
-transformers>=4.46,<5
+# llm2vec 0.2.3 imports version-specific Qwen2 internals and declares
+# transformers>=4.43.1,<=4.44.2.  Keep the upper end of that supported range;
+# the supplied adapters themselves were saved by PEFT 0.18.1.
+transformers==4.44.2
 peft==0.18.1
-llm2vec>=0.2.3,<0.4
+llm2vec==0.2.3
 accelerate>=1.2,<2
 safetensors>=0.4,<1
