@@ -1,0 +1,417 @@
+{
+  "checkpoint": "runs-attributes/structured-title-fused/pretrain/joint_proportional/all-domains/seed-42/best.pt",
+  "checkpoint_epoch": null,
+  "components": {
+    "fused": {
+      "by_domain": {
+        "0": {
+          "HR@10": 0.18466566798311318,
+          "HR@5": 0.12401833946161878,
+          "NDCG@10": 0.10276504564343335,
+          "NDCG@5": 0.0833143839260328,
+          "evaluation_protocol": "sampled",
+          "num_eval_users": 22029,
+          "num_skipped_users": 0
+        },
+        "1": {
+          "HR@10": 0.18037580549087562,
+          "HR@5": 0.12636053500839334,
+          "NDCG@10": 0.1057412075650575,
+          "NDCG@5": 0.0883769862458561,
+          "evaluation_protocol": "sampled",
+          "num_eval_users": 36934,
+          "num_skipped_users": 0
+        },
+        "2": {
+          "HR@10": 0.16473558159104149,
+          "HR@5": 0.10602628001812416,
+          "NDCG@10": 0.08882606768804342,
+          "NDCG@5": 0.06996934615468083,
+          "evaluation_protocol": "sampled",
+          "num_eval_users": 15449,
+          "num_skipped_users": 0
+        },
+        "3": {
+          "HR@10": 0.13954426295624117,
+          "HR@5": 0.09064327485380116,
+          "NDCG@10": 0.07663194110880331,
+          "NDCG@5": 0.06094578011127085,
+          "evaluation_protocol": "sampled",
+          "num_eval_users": 9918,
+          "num_skipped_users": 0
+        },
+        "4": {
+          "HR@10": 0.10757409440175632,
+          "HR@5": 0.06937431394072448,
+          "NDCG@10": 0.057823929655902634,
+          "NDCG@5": 0.045523398546807106,
+          "evaluation_protocol": "sampled",
+          "num_eval_users": 4555,
+          "num_skipped_users": 0
+        }
+      },
+      "by_train_item_frequency": {
+        "0": {
+          "by_domain": {},
+          "macro_domain": {
+            "HR@10": NaN,
+            "HR@5": NaN,
+            "NDCG@10": NaN,
+            "NDCG@5": NaN
+          },
+          "micro_user": {
+            "HR@10": NaN,
+            "HR@5": NaN,
+            "NDCG@10": NaN,
+            "NDCG@5": NaN
+          },
+          "num_eval_users": 0,
+          "num_nonempty_domains": 0,
+          "num_skipped_users": 0,
+          "range": {
+            "lower": 0,
+            "upper_exclusive": 1
+          },
+          "target_count": 0
+        },
+        "1-4": {
+          "by_domain": {},
+          "macro_domain": {
+            "HR@10": NaN,
+            "HR@5": NaN,
+            "NDCG@10": NaN,
+            "NDCG@5": NaN
+          },
+          "micro_user": {
+            "HR@10": NaN,
+            "HR@5": NaN,
+            "NDCG@10": NaN,
+            "NDCG@5": NaN
+          },
+          "num_eval_users": 0,
+          "num_nonempty_domains": 0,
+          "num_skipped_users": 0,
+          "range": {
+            "lower": 1,
+            "upper_exclusive": 5
+          },
+          "target_count": 0
+        },
+        "100+": {
+          "by_domain": {
+            "0": {
+              "HR@10": 0.3257879900913983,
+              "HR@5": 0.22473733663620057,
+              "NDCG@10": 0.18452586940271215,
+              "NDCG@5": 0.1520452524181046,
+              "evaluation_protocol": "sampled",
+              "num_eval_users": 11707,
+              "num_skipped_users": 0
+            },
+            "1": {
+              "HR@10": 0.3649439297903462,
+              "HR@5": 0.2670039005363237,
+              "NDCG@10": 0.22079775177300942,
+              "NDCG@5": 0.18922466132395832,
+              "evaluation_protocol": "sampled",
+              "num_eval_users": 16408,
+              "num_skipped_users": 0
+            },
+            "2": {
+              "HR@10": 0.3108635097493036,
+              "HR@5": 0.20835654596100278,
+              "NDCG@10": 0.17186757149238355,
+              "NDCG@5": 0.13889650440328094,
+              "evaluation_protocol": "sampled",
+              "num_eval_users": 7180,
+              "num_skipped_users": 0
+            },
+            "3": {
+              "HR@10": 0.29411764705882354,
+              "HR@5": 0.19768563162970107,
+              "NDCG@10": 0.16560956173936528,
+              "NDCG@5": 0.13466746639468624,
+              "evaluation_protocol": "sampled",
+              "num_eval_users": 4148,
+              "num_skipped_users": 0
+            },
+            "4": {
+              "HR@10": 0.30303030303030304,
+              "HR@5": 0.21301247771836007,
+              "NDCG@10": 0.17308952880140843,
+              "NDCG@5": 0.14383551352512405,
+              "evaluation_protocol": "sampled",
+              "num_eval_users": 1122,
+              "num_skipped_users": 0
+            }
+          },
+          "macro_domain": {
+            "HR@10": 0.31974867594403494,
+            "HR@5": 0.22215917849631764,
+            "NDCG@10": 0.18317805664177578,
+            "NDCG@5": 0.15173387961303084
+          },
+          "micro_user": {
+            "HR@10": 0.3351164797238999,
+            "HR@5": 0.23584370762973006,
+            "NDCG@10": 0.19470622312127378,
+            "NDCG@5": 0.162752446972961
+          },
+          "num_eval_users": 40565,
+          "num_nonempty_domains": 5,
+          "num_skipped_users": 0,
+          "range": {
+            "lower": 100,
+            "upper_exclusive": null
+          },
+          "target_count": 40565
+        },
+        "15-49": {
+          "by_domain": {
+            "0": {
+              "HR@10": 0.015057573073516387,
+              "HR@5": 0.0070859167404783,
+              "NDCG@10": 0.006220727918775756,
+              "NDCG@5": 0.00373175566661589,
+              "evaluation_protocol": "sampled",
+              "num_eval_users": 5645,
+              "num_skipped_users": 0
+            },
+            "1": {
+              "HR@10": 0.02113962592431492,
+              "HR@5": 0.008351457155284906,
+              "NDCG@10": 0.00858045767652204,
+              "NDCG@5": 0.0045165389035958,
+              "evaluation_protocol": "sampled",
+              "num_eval_users": 11495,
+              "num_skipped_users": 0
+            },
+            "2": {
+              "HR@10": 0.023382867132867132,
+              "HR@5": 0.009833916083916084,
+              "NDCG@10": 0.009749742310597142,
+              "NDCG@5": 0.00544657481995065,
+              "evaluation_protocol": "sampled",
+              "num_eval_users": 4576,
+              "num_skipped_users": 0
+            },
+            "3": {
+              "HR@10": 0.019286125503742084,
+              "HR@5": 0.008923431203223949,
+              "NDCG@10": 0.00850614267866612,
+              "NDCG@5": 0.00512029342167522,
+              "evaluation_protocol": "sampled",
+              "num_eval_users": 3474,
+              "num_skipped_users": 0
+            },
+            "4": {
+              "HR@10": 0.038461538461538464,
+              "HR@5": 0.019925857275254866,
+              "NDCG@10": 0.017981216304061923,
+              "NDCG@5": 0.01205120639563594,
+              "evaluation_protocol": "sampled",
+              "num_eval_users": 2158,
+              "num_skipped_users": 0
+            }
+          },
+          "macro_domain": {
+            "HR@10": 0.023465546019195795,
+            "HR@5": 0.01082411569163162,
+            "NDCG@10": 0.010207657377724597,
+            "NDCG@5": 0.0061732738414947
+          },
+          "micro_user": {
+            "HR@10": 0.021390960947784116,
+            "HR@5": 0.00932426502852128,
+            "NDCG@10": 0.00902139079114576,
+            "NDCG@5": 0.005181413798437059
+          },
+          "num_eval_users": 27348,
+          "num_nonempty_domains": 5,
+          "num_skipped_users": 0,
+          "range": {
+            "lower": 15,
+            "upper_exclusive": 50
+          },
+          "target_count": 27348
+        },
+        "5-14": {
+          "by_domain": {
+            "0": {
+              "HR@10": 0.0025477707006369425,
+              "HR@5": 0.0012738853503184713,
+              "NDCG@10": 0.0009732610081614349,
+              "NDCG@5": 0.0005486325580552777,
+              "evaluation_protocol": "sampled",
+              "num_eval_users": 785,
+              "num_skipped_users": 0
+            },
+            "1": {
+              "HR@10": 0.00804289544235925,
+              "HR@5": 0.0032171581769436996,
+              "NDCG@10": 0.002931403168987221,
+              "NDCG@5": 0.001338558630971933,
+              "evaluation_protocol": "sampled",
+              "num_eval_users": 1865,
+              "num_skipped_users": 0
+            },
+            "2": {
+              "HR@10": 0.015965166908563134,
+              "HR@5": 0.00725689404934688,
+              "NDCG@10": 0.006596288141147157,
+              "NDCG@5": 0.0038442849265275135,
+              "evaluation_protocol": "sampled",
+              "num_eval_users": 689,
+              "num_skipped_users": 0
+            },
+            "3": {
+              "HR@10": 0.011194029850746268,
+              "HR@5": 0.0018656716417910447,
+              "NDCG@10": 0.004738662365233045,
+              "NDCG@5": 0.0018656716417910447,
+              "evaluation_protocol": "sampled",
+              "num_eval_users": 536,
+              "num_skipped_users": 0
+            },
+            "4": {
+              "HR@10": 0.02511415525114155,
+              "HR@5": 0.0091324200913242,
+              "NDCG@10": 0.011297716127603693,
+              "NDCG@5": 0.006147342614649106,
+              "evaluation_protocol": "sampled",
+              "num_eval_users": 438,
+              "num_skipped_users": 0
+            }
+          },
+          "macro_domain": {
+            "HR@10": 0.01257280363068943,
+            "HR@5": 0.004549205861944859,
+            "NDCG@10": 0.00530746616222651,
+            "NDCG@5": 0.0027488980743989753
+          },
+          "micro_user": {
+            "HR@10": 0.010433572919081846,
+            "HR@5": 0.003941571991653142,
+            "NDCG@10": 0.0042346955767386075,
+            "NDCG@5": 0.0021489303928657116
+          },
+          "num_eval_users": 4313,
+          "num_nonempty_domains": 5,
+          "num_skipped_users": 0,
+          "range": {
+            "lower": 5,
+            "upper_exclusive": 15
+          },
+          "target_count": 4313
+        },
+        "50-99": {
+          "by_domain": {
+            "0": {
+              "HR@10": 0.04290853031860226,
+              "HR@5": 0.015416238437821172,
+              "NDCG@10": 0.01739126885630915,
+              "NDCG@5": 0.008695363862205386,
+              "evaluation_protocol": "sampled",
+              "num_eval_users": 3892,
+              "num_skipped_users": 0
+            },
+            "1": {
+              "HR@10": 0.058051911805749375,
+              "HR@5": 0.025676807144850683,
+              "NDCG@10": 0.024908850295079166,
+              "NDCG@5": 0.014639037183557167,
+              "evaluation_protocol": "sampled",
+              "num_eval_users": 7166,
+              "num_skipped_users": 0
+            },
+            "2": {
+              "HR@10": 0.06491344873501997,
+              "HR@5": 0.03062583222370173,
+              "NDCG@10": 0.029662148154034777,
+              "NDCG@5": 0.018677526111063242,
+              "evaluation_protocol": "sampled",
+              "num_eval_users": 3004,
+              "num_skipped_users": 0
+            },
+            "3": {
+              "HR@10": 0.051704545454545454,
+              "HR@5": 0.026704545454545453,
+              "NDCG@10": 0.02329367450498494,
+              "NDCG@5": 0.015381646131549161,
+              "evaluation_protocol": "sampled",
+              "num_eval_users": 1760,
+              "num_skipped_users": 0
+            },
+            "4": {
+              "HR@10": 0.06690561529271206,
+              "HR@5": 0.035842293906810034,
+              "NDCG@10": 0.030381940047072804,
+              "NDCG@5": 0.020641092877561103,
+              "evaluation_protocol": "sampled",
+              "num_eval_users": 837,
+              "num_skipped_users": 0
+            }
+          },
+          "macro_domain": {
+            "HR@10": 0.05689681032132583,
+            "HR@5": 0.026853143433545813,
+            "NDCG@10": 0.02512757637149617,
+            "NDCG@5": 0.015606933233187213
+          },
+          "micro_user": {
+            "HR@10": 0.055525541749204634,
+            "HR@5": 0.024791404045861096,
+            "NDCG@10": 0.024114009460723118,
+            "NDCG@5": 0.014358681612146778
+          },
+          "num_eval_users": 16659,
+          "num_nonempty_domains": 5,
+          "num_skipped_users": 0,
+          "range": {
+            "lower": 50,
+            "upper_exclusive": 100
+          },
+          "target_count": 16659
+        }
+      },
+      "macro_domain": {
+        "HR@10": 0.15537908248460555,
+        "HR@5": 0.10328454865653239,
+        "NDCG@10": 0.08635763833224805,
+        "NDCG@5": 0.06962597899692954
+      },
+      "micro_user": {
+        "HR@10": 0.17043370647465828,
+        "HR@5": 0.11534004612701805,
+        "NDCG@10": 0.09635995344433096,
+        "NDCG@5": 0.07866596084580053
+      },
+      "num_eval_users": 88885,
+      "num_nonempty_domains": 5,
+      "num_skipped_users": 0
+    }
+  },
+  "domain_names": {
+    "0": "Health",
+    "1": "Clothing",
+    "2": "Beauty",
+    "3": "Grocery",
+    "4": "Sports"
+  },
+  "evaluation_protocol": "sampled",
+  "evaluation_seed": 2026,
+  "experiment_config": "configs/experiment/attribute_structured_title_fused_pretrain.yaml",
+  "frequency_definition": "number of item occurrences in imported training-cohort sequences only",
+  "frequency_lower_bounds": [
+    0,
+    1,
+    5,
+    15,
+    50,
+    100
+  ],
+  "model_config": "configs/model/sasrec_structured_title_fused.yaml",
+  "num_eval_negatives": 999,
+  "schema_version": 1,
+  "split": "test"
+}
