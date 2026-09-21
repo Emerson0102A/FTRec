@@ -103,9 +103,13 @@ def load_checkpoint(
     if restore_rng:
         random.setstate(payload["rng"]["python"])
         np.random.set_state(payload["rng"]["numpy"])
-        torch.set_rng_state(payload["rng"]["torch"])
+        # map_location may move every tensor in the payload to CUDA, but the
+        # default CPU generator only accepts a CPU ByteTensor state.
+        torch.set_rng_state(payload["rng"]["torch"].cpu())
         if torch.cuda.is_available() and payload["rng"]["torch_cuda"]:
-            torch.cuda.set_rng_state_all(payload["rng"]["torch_cuda"])
+            torch.cuda.set_rng_state_all(
+                [state.cpu() for state in payload["rng"]["torch_cuda"]]
+            )
     return LoadedCheckpoint(
         metadata,
         dict(payload.get("training_state", {})),

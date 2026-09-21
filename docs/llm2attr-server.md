@@ -155,3 +155,17 @@ ftrec-adapt \
 rank 下 LoRA 参数量约为单塔的两倍；结果表必须同时报告总参数量和可训练参数量，
 不能把这项架构差异隐藏起来。建议先完成 seed 42 的可行性实验，再扩为相同的 5 个
 seeds，并额外报告按训练频次分桶的 head/medium/tail 指标。
+
+## 主干训练后的内容诊断
+
+四组主干结束后，在微调前统一运行：
+
+```bash
+bash scripts/run_content_diagnostics.sh
+```
+
+每个 `best.pt` 同目录会生成 `content-diagnostics.json`。双塔报告
+`fusion`、`title`、`attribute` 三套结果，单塔报告 `fused`。所有结果复用训练时
+保存的同一组 999 个同域负样本，并按目标物品在训练 cohort 中的出现次数报告
+`0`、`1-4`、`5-14`、`15-49`、`50-99`、`100+` 六个桶。频次统计明确排除
+valid/test cohort，因此不会用测试数据定义流行度。

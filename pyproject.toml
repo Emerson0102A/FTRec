@@ -31,6 +31,7 @@ ftrec-attribute-catalog = "ftrec.attributes.catalog:main"
 ftrec-llm2attr-check = "ftrec.attributes.runtime:main"
 ftrec-llm2attr-export = "ftrec.attributes.llm2attr:main"
 ftrec-structured-attribute-export = "ftrec.attributes.structured:main"
+ftrec-content-diagnostics = "ftrec.cli.diagnose_content:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
