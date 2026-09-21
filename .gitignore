@@ -16,3 +16,6 @@ Dataset
 *.sqlite-shm
 .pytest_cache/
 __pycache__/
+LLM2Attr
+.cache
+data
