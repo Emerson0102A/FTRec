@@ -22,6 +22,7 @@ class CheckpointMismatchError(RuntimeError):
 class LoadedCheckpoint:
     metadata: dict[str, Any]
     training_state: dict[str, Any]
+    optimizer_state: dict[str, Any]
 
 
 def model_state_hash(model: torch.nn.Module) -> str:
@@ -105,4 +106,8 @@ def load_checkpoint(
         torch.set_rng_state(payload["rng"]["torch"])
         if torch.cuda.is_available() and payload["rng"]["torch_cuda"]:
             torch.cuda.set_rng_state_all(payload["rng"]["torch_cuda"])
-    return LoadedCheckpoint(metadata, dict(payload.get("training_state", {})))
+    return LoadedCheckpoint(
+        metadata,
+        dict(payload.get("training_state", {})),
+        dict(payload.get("optimizer", {})),
+    )

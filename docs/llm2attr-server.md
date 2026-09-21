@@ -107,6 +107,29 @@ ftrec-pretrain \
   --model-config configs/model/sasrec_structured_title_fused.yaml
 ```
 
+四组内容模型默认最多训练 300 epoch，并使用 patience 20。如果已有旧版
+100-epoch 完整运行，不要使用 `--force` 从头覆盖；用 `--resume` 从同一目录的
+`last.pt` 原地接续。它会恢复模型、优化器、随机数状态、全局步数、历史最优值和
+前 100 轮 `metrics.jsonl`，其中 300 表示总 epoch 上限：
+
+```bash
+ftrec-pretrain --resume \
+  --config configs/experiment/attribute_llm2attr_pretrain.yaml \
+  --model-config configs/model/sasrec_llm2attr.yaml
+
+ftrec-pretrain --resume \
+  --config configs/experiment/attribute_structured_title_pretrain.yaml \
+  --model-config configs/model/sasrec_structured_title.yaml
+
+ftrec-pretrain --resume \
+  --config configs/experiment/attribute_llm2attr_fused_pretrain.yaml \
+  --model-config configs/model/sasrec_llm2attr_fused.yaml
+
+ftrec-pretrain --resume \
+  --config configs/experiment/attribute_structured_title_fused_pretrain.yaml \
+  --model-config configs/model/sasrec_structured_title_fused.yaml
+```
+
 再分别运行五个目标域的 LoRA 微调：
 
 ```bash

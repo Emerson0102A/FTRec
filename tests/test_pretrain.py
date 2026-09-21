@@ -753,6 +753,100 @@ def test_joint_pretraining_run_writes_checkpoints_metrics_and_gradients(
     assert "100%" in stderr
 
 
+def test_pretraining_resume_continues_epoch_optimizer_and_metrics(
+    tmp_path: Path,
+) -> None:
+    from ftrec.data.datasets import SequenceRecord, SequenceStore
+    from ftrec.models.sasrec import SASRecConfig
+    from ftrec.training.pretrain import PretrainSettings, train_pretraining
+
+    records = []
+    catalogs = {}
+    for domain in range(5):
+        base = domain * 10 + 1
+        catalogs[domain] = tuple(range(base, base + 5))
+        records.append(
+            SequenceRecord(
+                user_id=domain + 1,
+                item_ids=(base, base + 1, base + 2, base + 3),
+                domain_ids=(domain,) * 4,
+                timestamps=(1, 2, 3, 4),
+                splits=("train", "train", "valid", "test"),
+            )
+        )
+    store = SequenceStore(tuple(records), catalogs)
+    model_config = SASRecConfig(
+        num_items=45,
+        hidden_size=4,
+        num_blocks=1,
+        num_heads=1,
+        dropout=0.2,
+        maxlen=3,
+    )
+    output = tmp_path / "resumed"
+    common = {
+        "method": "joint",
+        "output_dir": output,
+        "seed": 42,
+        "batch_size": 1,
+        "steps_per_epoch": 1,
+        "device": "cpu",
+        "evaluation_protocol": "sampled",
+        "num_eval_negatives": 1,
+        "gradient_conflict_enabled": False,
+        "progress": False,
+    }
+
+    train_pretraining(
+        store,
+        model_config,
+        PretrainSettings(**common, epochs=1, patience=10),
+    )
+    first_last = torch.load(output / "last.pt", weights_only=False)
+
+    train_pretraining(
+        store,
+        model_config,
+        PretrainSettings(**common, epochs=3, patience=20, resume=True),
+    )
+
+    result = __import__("json").loads(
+        (output / "result.json").read_text(encoding="utf-8")
+    )
+    resumed_last = torch.load(output / "last.pt", weights_only=False)
+    epochs = [
+        __import__("json").loads(line)["epoch"]
+        for line in (output / "metrics.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert result["resume_from_epoch"] == 1
+    assert result["last_epoch"] == 3
+    assert epochs == [1, 2, 3]
+    assert resumed_last["training_state"] == {"epoch": 3, "global_step": 3}
+    assert (
+        resumed_last["metadata"]["initialization_hash"]
+        == first_last["metadata"]["initialization_hash"]
+    )
+    assert resumed_last["optimizer"]["dense"]["state"]
+
+    uninterrupted_output = tmp_path / "uninterrupted"
+    train_pretraining(
+        store,
+        model_config,
+        PretrainSettings(
+            **{**common, "output_dir": uninterrupted_output},
+            epochs=3,
+            patience=20,
+        ),
+    )
+    uninterrupted_last = torch.load(
+        uninterrupted_output / "last.pt", weights_only=False
+    )
+    assert (
+        resumed_last["metadata"]["model_state_hash"]
+        == uninterrupted_last["metadata"]["model_state_hash"]
+    )
+
+
 def test_formal_conflict_profile_uses_best_not_last_checkpoint(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -781,7 +875,7 @@ def test_formal_conflict_profile_uses_best_not_last_checkpoint(
             )
         )
     store = SequenceStore(tuple(records), catalogs)
-    validation_values = iter((1.0, 0.0))
+    validation_values = iter((1.0, 0.0, 1.0))
 
     def fake_evaluate(*_args, seed_offset: int, **_kwargs):
         value = 0.5 if seed_offset >= 20_000 else next(validation_values)

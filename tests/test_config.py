@@ -116,7 +116,6 @@ def test_production_configs_follow_gmflowrec_training_protocol() -> None:
         / "experiment"
         / "lora_all_embedding_multineg31.yaml"
     )["ranks"] == [5]
-
     for name, context_mode, output_root in (
         ("context_mixed_min5", "mixed", "runs-context-ablation/mixed-min5"),
         (
@@ -164,3 +163,18 @@ def test_production_configs_follow_gmflowrec_training_protocol() -> None:
     assert load_config(root / "configs" / "experiment" / "pcgrad.yaml")[
         "pcgrad_projection_scope"
     ] == "backbone"
+
+
+def test_attribute_pretraining_configs_allow_late_convergence() -> None:
+    from ftrec.config import load_config
+
+    root = Path(__file__).parents[1] / "configs" / "experiment"
+    for name in (
+        "attribute_llm2attr_pretrain",
+        "attribute_llm2attr_fused_pretrain",
+        "attribute_structured_title_pretrain",
+        "attribute_structured_title_fused_pretrain",
+    ):
+        config = load_config(root / f"{name}.yaml")
+        assert config["epochs"] == 300
+        assert config["patience"] == 20

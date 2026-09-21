@@ -33,6 +33,14 @@ def test_pretrain_cli_accepts_context_ablation_methods(method: str) -> None:
     assert args.method == method
 
 
+def test_pretrain_cli_accepts_in_place_resume() -> None:
+    from ftrec.cli.pretrain import build_parser
+
+    args = build_parser().parse_args(["--resume"])
+
+    assert args.resume is True
+
+
 @pytest.mark.parametrize("module", CLI_MODULES)
 def test_all_commands_expose_help(module: str) -> None:
     result = subprocess.run(

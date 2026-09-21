@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import random
+import shutil
 import sys
 import time
 from dataclasses import asdict, dataclass
@@ -121,6 +122,7 @@ class PretrainSettings:
     data_hash: str = "unknown"
     force: bool = False
     progress: bool = True
+    resume: bool = False
 
     def __post_init__(self) -> None:
         specification = method_spec(self.method)
@@ -151,6 +153,13 @@ class PretrainSettings:
             raise ValueError("gradient_conflict_checkpoint_steps must be positive")
         if self.pcgrad_projection_scope not in {"backbone", "full"}:
             raise ValueError("pcgrad_projection_scope must be 'backbone' or 'full'")
+        if self.force and self.resume:
+            raise ValueError("force and resume cannot be enabled together")
+        if self.resume and self.gradient_conflict_enabled:
+            raise ValueError(
+                "resuming training-trajectory gradient logging is not supported; "
+                "disable gradient_conflict before resuming"
+            )
 
 
 @dataclass(frozen=True)
@@ -185,7 +194,50 @@ def pretrain_config_hash(
     training.pop("output_dir")
     training.pop("force")
     training.pop("progress")
+    training.pop("resume")
     return canonical_hash({"model": asdict(model_config), "training": training})
+
+
+_RESUME_MUTABLE_SETTINGS = {
+    "epochs",
+    "force",
+    "output_dir",
+    "patience",
+    "progress",
+    "resume",
+}
+
+
+def _validate_resume_configuration(
+    source: Path,
+    model_config: SASRecConfig,
+    settings: PretrainSettings,
+) -> None:
+    """Allow only the stopping horizon to change across an in-place resume."""
+    resolved_path = source / "resolved_config.json"
+    if not resolved_path.is_file():
+        raise FileNotFoundError(f"resume metadata is missing: {resolved_path}")
+    previous = json.loads(resolved_path.read_text(encoding="utf-8"))
+    current = json.loads(
+        canonical_json({"model": asdict(model_config), "training": asdict(settings)})
+    )
+    if previous.get("model") != current["model"]:
+        raise ValueError("resume model configuration does not match the checkpoint")
+    previous_training = dict(previous.get("training", {}))
+    current_training = dict(current["training"])
+    for key in _RESUME_MUTABLE_SETTINGS:
+        previous_training.pop(key, None)
+        current_training.pop(key, None)
+    if previous_training != current_training:
+        changed = sorted(
+            key
+            for key in set(previous_training) | set(current_training)
+            if previous_training.get(key) != current_training.get(key)
+        )
+        raise ValueError(
+            "resume training configuration changed unsupported fields: "
+            + ", ".join(changed)
+        )
 
 
 @dataclass(frozen=True)
@@ -807,15 +859,6 @@ def train_pretraining(
     optimizers = build_optimizers(model, optimizer_settings)
     stopping = EarlyStopping(settings.patience)
     config_hash = pretrain_config_hash(model_config, settings)
-    metadata = {
-        "config_hash": config_hash,
-        "data_hash": settings.data_hash,
-        "domain": settings.domain,
-        "initialization_hash": initialization_hash,
-        "method": settings.method,
-        "pcgrad_projection_scope": settings.pcgrad_projection_scope,
-        "seed": settings.seed,
-    }
     num_total = sum(parameter.numel() for parameter in model.parameters())
     num_trainable = sum(
         parameter.numel() for parameter in model.parameters() if parameter.requires_grad
@@ -849,8 +892,73 @@ def train_pretraining(
             for domain, examples in test_examples.items()
         }
 
-    with RunDirectory(settings.output_dir, force=settings.force) as run:
+    resume_source: Path | None = None
+    resume_from_epoch: int | None = None
+    start_epoch = 1
+    global_step = 0
+    if settings.resume:
+        resume_source = Path(settings.output_dir).resolve()
+        _validate_resume_configuration(resume_source, model_config, settings)
+        expected = {
+            "data_hash": settings.data_hash,
+            "domain": settings.domain,
+            "method": settings.method,
+            "pcgrad_projection_scope": settings.pcgrad_projection_scope,
+            "seed": settings.seed,
+        }
+        loaded_best = load_checkpoint(
+            resume_source / "best.pt", model, expected=expected, map_location=device
+        )
+        best_epoch = int(loaded_best.training_state["epoch"])
+        best_metric = float(loaded_best.training_state["validation_macro_ndcg"])
+        loaded_last = load_checkpoint(
+            resume_source / "last.pt",
+            model,
+            expected=expected,
+            map_location=device,
+            restore_rng=True,
+        )
+        resume_from_epoch = int(loaded_last.training_state["epoch"])
+        global_step = int(loaded_last.training_state["global_step"])
+        if settings.epochs <= resume_from_epoch:
+            raise ValueError(
+                f"target epochs ({settings.epochs}) must exceed the resume epoch "
+                f"({resume_from_epoch})"
+            )
+        if best_epoch > resume_from_epoch:
+            raise ValueError("best checkpoint is newer than the last checkpoint")
+        bad_epochs = resume_from_epoch - best_epoch
+        if bad_epochs >= settings.patience:
+            raise ValueError(
+                "the previous run already satisfies the requested early-stopping "
+                "patience"
+            )
+        optimizers.load_state_dict(loaded_last.optimizer_state)
+        initialization_hash = str(loaded_last.metadata["initialization_hash"])
+        stopping = EarlyStopping(
+            settings.patience,
+            best_epoch=best_epoch,
+            best_metric=best_metric,
+            bad_epochs=bad_epochs,
+        )
+        start_epoch = resume_from_epoch + 1
+
+    metadata = {
+        "config_hash": config_hash,
+        "data_hash": settings.data_hash,
+        "domain": settings.domain,
+        "initialization_hash": initialization_hash,
+        "method": settings.method,
+        "pcgrad_projection_scope": settings.pcgrad_projection_scope,
+        "seed": settings.seed,
+    }
+
+    with RunDirectory(
+        settings.output_dir, force=settings.force or settings.resume
+    ) as run:
         assert run.path is not None
+        if resume_source is not None:
+            shutil.copytree(resume_source, run.path, dirs_exist_ok=True)
         run.write_json(
             "resolved_config.json",
             json.loads(
@@ -861,6 +969,9 @@ def train_pretraining(
         )
         run.write_json("environment.json", runtime_metadata(device))
         total_steps = settings.epochs * steps_per_epoch
+        remaining_steps = total_steps - global_step
+        if remaining_steps < 1:
+            raise ValueError("resume checkpoint has no remaining training steps")
         manifest = prepare_batch_manifest(
             run.path / "batch_manifest.json",
             train_examples,
@@ -870,6 +981,8 @@ def train_pretraining(
             proportional=settings.method == "joint_proportional",
         )
         batch_steps = iter(manifest.iter_steps())
+        for _ in range(global_step):
+            next(batch_steps)
         example_lookup_by_domain = {
             domain: {example.example_id: example for example in examples}
             for domain, examples in train_examples.items()
@@ -895,18 +1008,17 @@ def train_pretraining(
                 profile_scope="training_trajectory",
             )
         metrics_path = run.path / "metrics.jsonl"
-        global_step = 0
-        last_epoch = 0
+        last_epoch = start_epoch - 1
         training_started = time.perf_counter()
         training_progress = tqdm(
-            total=total_steps,
+            total=remaining_steps,
             desc=f"train {settings.method} seed-{settings.seed}",
             unit="step",
             mininterval=1.0,
             dynamic_ncols=True,
             disable=not settings.progress,
         )
-        for epoch in range(1, settings.epochs + 1):
+        for epoch in range(start_epoch, settings.epochs + 1):
             last_epoch = epoch
             losses: list[float] = []
             norms: list[float] = []
@@ -984,7 +1096,12 @@ def train_pretraining(
             )
             validation_ndcg = _macro_ndcg(final_validation)
             elapsed_seconds = time.perf_counter() - training_started
-            eta_seconds = elapsed_seconds / epoch * (settings.epochs - epoch)
+            completed_epochs = epoch - start_epoch + 1
+            eta_seconds = (
+                elapsed_seconds
+                / completed_epochs
+                * (settings.epochs - epoch)
+            )
             epoch_record = {
                 "domain_names": _domain_names(domains),
                 "elapsed_seconds": elapsed_seconds,
@@ -1056,7 +1173,7 @@ def train_pretraining(
                 val_ndcg=f"{validation_ndcg:.4f}",
             )
             if stopping.should_stop:
-                training_progress.total = global_step
+                training_progress.total = training_progress.n
                 training_progress.refresh()
                 break
 
@@ -1078,9 +1195,31 @@ def train_pretraining(
                 training_state={"epoch": last_epoch, "global_step": global_step},
                 optimizer_state=optimizers.state_dict(),
             )
-        loaded_best = load_checkpoint(
-            run.path / "best.pt", model, expected=metadata, map_location=device
+        checkpoint_expected = (
+            metadata
+            if resume_source is None
+            else {
+                "data_hash": settings.data_hash,
+                "domain": settings.domain,
+                "method": settings.method,
+                "pcgrad_projection_scope": settings.pcgrad_projection_scope,
+                "seed": settings.seed,
+            }
         )
+        loaded_best = load_checkpoint(
+            run.path / "best.pt",
+            model,
+            expected=checkpoint_expected,
+            map_location=device,
+        )
+        if resume_source is not None:
+            save_checkpoint(
+                run.path / "best.pt",
+                model,
+                metadata=metadata,
+                training_state=loaded_best.training_state,
+                optimizer_state=loaded_best.optimizer_state,
+            )
         conflict_profile: dict[str, object] | None = None
         if gradient_logger is not None:
             checkpoint_epoch = int(
@@ -1102,6 +1241,14 @@ def train_pretraining(
                 progress=settings.progress,
                 pcgrad_projection_scope=settings.pcgrad_projection_scope,
             )
+        final_validation = _evaluate_domains(
+            model,
+            validation_examples,
+            store.items_by_domain,
+            settings,
+            seed_offset=10_000,
+            sampled_candidates_by_domain=validation_candidates,
+        )
         final_test = _evaluate_domains(
             model,
             test_examples,
@@ -1123,6 +1270,8 @@ def train_pretraining(
             "pcgrad_projection_scope": settings.pcgrad_projection_scope,
             "num_total_params": num_total,
             "num_trainable_params": num_trainable,
+            "last_epoch": last_epoch,
+            "resume_from_epoch": resume_from_epoch,
             "seed": settings.seed,
             "test_metrics": final_test,
             "test_metrics_by_name": _metrics_by_domain_name(final_test),
@@ -1135,6 +1284,8 @@ def train_pretraining(
                 "config_hash": config_hash,
                 "data_hash": settings.data_hash,
                 "method": settings.method,
+                "last_epoch": last_epoch,
+                "resume_from_epoch": resume_from_epoch,
                 "seed": settings.seed,
             }
         )

@@ -39,6 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--no-progress", action="store_true")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="continue an existing run in place from last.pt",
+    )
     return parser
 
 
@@ -73,6 +78,8 @@ def _resolved_output(
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.force and args.resume:
+        raise ValueError("--force and --resume cannot be used together")
     config = load_config(args.config)
     gradient_config = config.get("gradient_conflict", {})
     if not isinstance(gradient_config, dict):
@@ -132,6 +139,7 @@ def main(argv: list[str] | None = None) -> int:
         data_hash=_data_hash(processed_dir),
         force=args.force,
         progress=bool(config.get("progress", True)) and not args.no_progress,
+        resume=args.resume,
     )
     specification = method_spec(method)
     domains = (
@@ -153,14 +161,19 @@ def main(argv: list[str] | None = None) -> int:
     completion_path = output_dir / "COMPLETE.json"
     decision = "create"
     if completion_path.is_file() and not args.force:
-        completion = json.loads(completion_path.read_text(encoding="utf-8"))
-        exact = (
-            completion.get("config_hash") == resolved_hash
-            and completion.get("data_hash") == settings.data_hash
-            and completion.get("method") == settings.method
-            and completion.get("seed") == settings.seed
-        )
-        decision = "skip" if exact else "conflict"
+        if args.resume:
+            decision = "resume"
+        else:
+            completion = json.loads(completion_path.read_text(encoding="utf-8"))
+            exact = (
+                completion.get("config_hash") == resolved_hash
+                and completion.get("data_hash") == settings.data_hash
+                and completion.get("method") == settings.method
+                and completion.get("seed") == settings.seed
+            )
+            decision = "skip" if exact else "conflict"
+    elif args.resume:
+        decision = "missing-resume"
     preview = {
         "config_hash": resolved_hash,
         "data_hash": settings.data_hash,
@@ -172,13 +185,17 @@ def main(argv: list[str] | None = None) -> int:
     }
     if args.dry_run:
         print(json.dumps(preview, ensure_ascii=False, sort_keys=True))
-        return 0 if decision != "conflict" else 2
+        return 0 if decision not in {"conflict", "missing-resume"} else 2
     if decision == "skip":
         print(json.dumps(preview, ensure_ascii=False, sort_keys=True))
         return 0
     if decision == "conflict":
         raise FileExistsError(
             f"completed output has another configuration: {output_dir}; use --force"
+        )
+    if decision == "missing-resume":
+        raise FileNotFoundError(
+            f"cannot resume because no completed run exists: {output_dir}"
         )
     result = train_pretraining(store, model_config, settings)
     print(
