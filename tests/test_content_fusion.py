@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import csv
+import gzip
+
+import pytest
 import torch
 from torch import nn
 
@@ -20,10 +24,9 @@ def _artifact(tmp_path):
         dtype="float32",
     )
     for item_id in range(1, 4):
-        title[item_id] = item_id
-        attributes[item_id, 0] = item_id
-        attributes[item_id, 1] = item_id + 1
-        attributes[item_id, 2] = item_id + 2
+        title[item_id, item_id] = 1
+        for attribute_id in range(3):
+            attributes[item_id, attribute_id, item_id + attribute_id] = 1
         present[item_id] = True
     finish_artifact(
         tmp_path,
@@ -39,8 +42,28 @@ def _artifact(tmp_path):
     )
 
 
-def _model(tmp_path, mode: str) -> SASRec:
+def _domain_file(tmp_path):
+    path = tmp_path / "items.csv.gz"
+    with gzip.open(path, "wt", encoding="utf-8", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=("item_id", "domain_id"))
+        writer.writeheader()
+        for item_id, domain_id in ((1, 10), (2, 10), (3, 20), (4, 20)):
+            writer.writerow({"item_id": item_id, "domain_id": domain_id})
+    return path
+
+
+def _model(
+    tmp_path,
+    mode: str,
+    *,
+    attribute_pooling: str = "hard_top1",
+) -> SASRec:
     _artifact(tmp_path)
+    domain_file = (
+        str(_domain_file(tmp_path))
+        if attribute_pooling == "domain_title_attention"
+        else None
+    )
     return SASRec(
         SASRecConfig(
             num_items=4,
@@ -51,6 +74,8 @@ def _model(tmp_path, mode: str) -> SASRec:
             maxlen=3,
             item_embedding_mode=mode,
             attribute_artifact=str(tmp_path),
+            attribute_pooling=attribute_pooling,
+            item_domain_file=domain_file,
         )
     )
 
@@ -102,6 +127,92 @@ def test_fused_mode_builds_one_item_embedding_before_one_sasrec(tmp_path):
     assert model.attribute_tower is None
     assert len(components) == 1
     assert torch.allclose(model.score(contexts, candidates), components[0])
+
+
+@pytest.mark.parametrize(
+    "pooling",
+    ("mean_all", "soft_attention", "domain_title_attention"),
+)
+def test_soft_pooling_uses_all_valid_attributes_and_masks_missing(
+    tmp_path, pooling
+):
+    model = _model(tmp_path, "content_fused", attribute_pooling=pooling)
+    assert model.fused_tower is not None
+    encoder = model.fused_tower.item_encoder
+    ids = torch.tensor([0, 1, 4])
+    title = encoder.title_encoder(ids)
+
+    pooled, weights = encoder.pool_attribute_embeddings(ids, title)
+
+    assert weights.shape == (3, 3)
+    assert torch.count_nonzero(weights[0]) == 0
+    assert torch.count_nonzero(weights[2]) == 0
+    assert torch.allclose(weights[1].sum(), torch.tensor(1.0))
+    assert torch.all(weights[1] > 0)
+    assert torch.count_nonzero(pooled[0]) == 0
+    assert torch.count_nonzero(pooled[2]) == 0
+
+
+def test_attention_pooling_starts_from_mean_and_receives_gradients(tmp_path):
+    for pooling in ("soft_attention", "domain_title_attention"):
+        model = _model(
+            tmp_path / pooling,
+            "content_fused",
+            attribute_pooling=pooling,
+        )
+        assert model.fused_tower is not None
+        encoder = model.fused_tower.item_encoder
+        ids = torch.tensor([1, 2, 3])
+        title = encoder.title_encoder(ids)
+        pooled, weights = encoder.pool_attribute_embeddings(ids, title)
+
+        assert torch.allclose(weights, torch.full_like(weights, 1 / 3))
+        pooled.sum().backward()
+        if pooling == "soft_attention":
+            assert encoder.attribute_title_query.weight.grad is not None
+        else:
+            assert encoder.domain_queries.grad is not None
+            assert all(
+                projection.weight.grad is not None
+                for projection in encoder.domain_title_queries
+            )
+
+
+def test_domain_title_attention_can_learn_different_domain_preferences(tmp_path):
+    model = _model(
+        tmp_path,
+        "content_fused",
+        attribute_pooling="domain_title_attention",
+    )
+    assert model.fused_tower is not None
+    encoder = model.fused_tower.item_encoder
+    assert encoder.num_domains == 2
+    with torch.no_grad():
+        encoder.domain_queries[1].fill_(1.0)
+        encoder.domain_queries[2].fill_(-1.0)
+    ids = torch.tensor([1, 3])
+    title = encoder.title_encoder(ids)
+
+    _, weights = encoder.pool_attribute_embeddings(ids, title)
+
+    assert not torch.allclose(weights[0], weights[1])
+
+
+def test_pooling_configuration_rejects_ambiguous_or_missing_domain_inputs(tmp_path):
+    with pytest.raises(ValueError, match="content_fused"):
+        SASRecConfig(
+            num_items=4,
+            item_embedding_mode="content_dual",
+            attribute_artifact=str(tmp_path),
+            attribute_pooling="mean_all",
+        )
+    with pytest.raises(ValueError, match="item_domain_file"):
+        SASRecConfig(
+            num_items=4,
+            item_embedding_mode="content_fused",
+            attribute_artifact=str(tmp_path),
+            attribute_pooling="domain_title_attention",
+        )
 
 
 def test_content_encoders_zero_padding_and_missing_items(tmp_path):

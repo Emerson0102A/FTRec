@@ -431,6 +431,7 @@ def test_legacy_lora_hash_omits_inapplicable_bottleneck_field(tmp_path: Path) ->
     from dataclasses import asdict
 
     from ftrec.config import canonical_hash
+    from ftrec.models.sasrec import model_config_dict
     from ftrec.training.adapt import AdaptSettings, adapt_config_hash
 
     _, config, _ = _fixture(tmp_path)
@@ -455,5 +456,5 @@ def test_legacy_lora_hash_omits_inapplicable_bottleneck_field(tmp_path: Path) ->
         legacy.pop(key)
 
     assert adapt_config_hash(config, settings) == canonical_hash(
-        {"model": asdict(config), "training": legacy}
+        {"model": model_config_dict(config), "training": legacy}
     )

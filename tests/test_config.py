@@ -178,3 +178,24 @@ def test_attribute_pretraining_configs_allow_late_convergence() -> None:
         config = load_config(root / f"{name}.yaml")
         assert config["epochs"] == 300
         assert config["patience"] == 20
+
+
+def test_llm2attr_pooling_ablation_configs_are_explicit() -> None:
+    from ftrec.config import load_config
+
+    root = Path(__file__).parents[1] / "configs" / "model"
+    expected = {
+        "sasrec_llm2attr_fused_mean": "mean_all",
+        "sasrec_llm2attr_fused_soft_attention": "soft_attention",
+        "sasrec_llm2attr_fused_domain_title_attention": (
+            "domain_title_attention"
+        ),
+    }
+    for name, pooling in expected.items():
+        config = load_config(root / f"{name}.yaml")
+        assert config["item_embedding_mode"] == "content_fused"
+        assert config["attribute_pooling"] == pooling
+    domain_config = load_config(
+        root / "sasrec_llm2attr_fused_domain_title_attention.yaml"
+    )
+    assert domain_config["item_domain_file"].endswith("items.csv.gz")

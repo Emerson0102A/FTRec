@@ -32,7 +32,7 @@ from ftrec.data.sampling import (
     resolve_evaluation_candidates,
 )
 from ftrec.evaluation.ranking import evaluate_model
-from ftrec.models.sasrec import SASRec, SASRecConfig
+from ftrec.models.sasrec import SASRec, SASRecConfig, model_config_dict
 from ftrec.reproducibility import resolve_device, runtime_metadata, seed_everything
 from ftrec.training.checkpoint import load_checkpoint, model_state_hash, save_checkpoint
 from ftrec.training.engine import (
@@ -195,7 +195,9 @@ def pretrain_config_hash(
     training.pop("force")
     training.pop("progress")
     training.pop("resume")
-    return canonical_hash({"model": asdict(model_config), "training": training})
+    return canonical_hash(
+        {"model": model_config_dict(model_config), "training": training}
+    )
 
 
 _RESUME_MUTABLE_SETTINGS = {
@@ -219,7 +221,9 @@ def _validate_resume_configuration(
         raise FileNotFoundError(f"resume metadata is missing: {resolved_path}")
     previous = json.loads(resolved_path.read_text(encoding="utf-8"))
     current = json.loads(
-        canonical_json({"model": asdict(model_config), "training": asdict(settings)})
+        canonical_json(
+            {"model": model_config_dict(model_config), "training": asdict(settings)}
+        )
     )
     if previous.get("model") != current["model"]:
         raise ValueError("resume model configuration does not match the checkpoint")
@@ -963,7 +967,10 @@ def train_pretraining(
             "resolved_config.json",
             json.loads(
                 canonical_json(
-                    {"model": asdict(model_config), "training": asdict(settings)}
+                    {
+                        "model": model_config_dict(model_config),
+                        "training": asdict(settings),
+                    }
                 )
             ),
         )

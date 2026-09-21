@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 import torch
 from torch import nn
 
 from .attention import SASRecBlock
 from .content_encoder import (
+    ATTRIBUTE_POOLING_MODES,
     AttributeItemEncoder,
     FusedContentItemEncoder,
     TitleItemEncoder,
@@ -32,6 +33,9 @@ class SASRecConfig:
     maxlen: int = 50
     item_embedding_mode: str = "id"
     attribute_artifact: str | None = None
+    attribute_pooling: str = "hard_top1"
+    item_domain_file: str | None = None
+    attribute_temperature: float = 1.0
 
     def __post_init__(self) -> None:
         if self.num_items < 1 or self.hidden_size < 1 or self.num_blocks < 1:
@@ -56,6 +60,45 @@ class SASRecConfig:
             raise ValueError(
                 f"{self.item_embedding_mode} requires attribute_artifact"
             )
+        if self.attribute_pooling not in ATTRIBUTE_POOLING_MODES:
+            raise ValueError(
+                "attribute_pooling must be one of "
+                f"{ATTRIBUTE_POOLING_MODES}, got {self.attribute_pooling!r}"
+            )
+        if self.attribute_temperature <= 0:
+            raise ValueError("attribute_temperature must be positive")
+        if (
+            self.attribute_pooling != "hard_top1"
+            and self.item_embedding_mode != "content_fused"
+        ):
+            raise ValueError(
+                "non-hard attribute pooling is currently defined only for "
+                "content_fused"
+            )
+        needs_domains = self.attribute_pooling == "domain_title_attention"
+        if needs_domains and self.item_domain_file is None:
+            raise ValueError(
+                "domain_title_attention requires item_domain_file"
+            )
+        if not needs_domains and self.item_domain_file is not None:
+            raise ValueError(
+                "item_domain_file is only used by domain_title_attention"
+            )
+
+
+def model_config_dict(config: SASRecConfig) -> dict[str, object]:
+    """Serialize configs without changing hashes of legacy checkpoints."""
+
+    values = asdict(config)
+    if (
+        config.attribute_pooling == "hard_top1"
+        and config.item_domain_file is None
+        and config.attribute_temperature == 1.0
+    ):
+        values.pop("attribute_pooling")
+        values.pop("item_domain_file")
+        values.pop("attribute_temperature")
+    return values
 
 
 class _ContentSASRecTower(nn.Module):
@@ -196,10 +239,18 @@ class SASRec(nn.Module):
                 self.fused_tower = _ContentSASRecTower(
                     config,
                     FusedContentItemEncoder(
-                        artifact, hidden_size=config.hidden_size
+                        artifact,
+                        hidden_size=config.hidden_size,
+                        attribute_pooling=config.attribute_pooling,
+                        item_domain_file=config.item_domain_file,
+                        attribute_temperature=config.attribute_temperature,
                     ),
                 )
         self.reset_parameters()
+        if self.fused_tower is not None:
+            encoder = self.fused_tower.item_encoder
+            if isinstance(encoder, FusedContentItemEncoder):
+                encoder.reset_pooling_parameters()
 
     @property
     def is_content_model(self) -> bool:

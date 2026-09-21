@@ -175,6 +175,39 @@ valid/test cohort，因此不会用测试数据定义流行度。
 不会根据测试正样本所属桶给整行候选加权，因此不泄漏目标身份。脚本也会对 ID-SASRec
 运行相同的频次诊断。
 
+## 三属性聚合消融（先于序列消融）
+
+原始 `sasrec_llm2attr_fused.yaml` 保留 MyRec 的 `hard_top1`：训练时用 hard
+Gumbel、评估时用 argmax，从三个属性中只选一个。它现在只作为旧基线，不再假设
+硬选择一定最优。新增三种只改变属性聚合、仍然不使用 ID embedding 的单塔模型：
+
+- `mean_all`：对所有非零属性等权平均；
+- `soft_attention`：由 title 生成 query，对所有非零属性做可微 softmax；
+- `domain_title_attention`：借鉴 MyModel4，由 item 所属 domain 的可学习 query 与
+  domain-specific title query 共同产生 softmax 权重。
+
+三种软聚合都先把每个属性独立投影到 SASRec hidden size，再融合。注意力参数从零
+初始化，因此初始权重等同于 `mean_all`，训练后才学习偏好；缺失属性会被 mask。
+领域来自 `items.csv.gz` 的 item-domain 映射，只描述候选物品自身，不读取 target、
+valid/test 频次或用户标签。为了隔离“聚合机制”的贡献，这里没有移植 MyModel4 的
+correction branch，也没有额外加入 domain embedding。
+
+先训练三个新模型（seed 42、joint proportional、最多 300 epoch、patience 20）：
+
+```bash
+bash scripts/run_attribute_pooling_ablation.sh
+```
+
+原 hard-top1 结果复用 `runs-attributes/llm2attr-fused`，不重复训练。三个新结果位于
+`runs-attribute-pooling/{mean-all,soft-attention,domain-title-attention}`。完成后运行：
+
+```bash
+ACTION=diagnose bash scripts/run_attribute_pooling_ablation.sh
+```
+
+选择 validation macro NDCG@10 最好的聚合模型，再与 ID 和 structured-title-fused
+一起进入下面的 mixed/domain-only 序列消融；不要先根据 test 挑模型。
+
 ## Mixed 与 domain-only 序列消融
 
 不能直接用 `joint_proportional` 对比 domain-only，因为前者包含没有目标域历史的额外

@@ -40,7 +40,7 @@ from ftrec.models.lora import (
     lora_parameter_names,
     save_adapter_checkpoint,
 )
-from ftrec.models.sasrec import SASRec, SASRecConfig
+from ftrec.models.sasrec import SASRec, SASRecConfig, model_config_dict
 from ftrec.reproducibility import resolve_device, runtime_metadata, seed_everything
 from ftrec.training.checkpoint import load_checkpoint, save_checkpoint
 from ftrec.training.engine import EarlyStopping, OptimizerSettings, build_optimizers
@@ -210,7 +210,9 @@ def adapt_config_hash(model_config: SASRecConfig, settings: AdaptSettings) -> st
         training.pop("context_mode")
     if training.get("min_domain_sequence_length") == 1:
         training.pop("min_domain_sequence_length")
-    return canonical_hash({"model": asdict(model_config), "training": training})
+    return canonical_hash(
+        {"model": model_config_dict(model_config), "training": training}
+    )
 
 
 def _build_adaptation_examples(
@@ -458,7 +460,7 @@ def train_adaptation(
                     {
                         "base_checkpoint": base_checkpoint,
                         "base_hash": base_hash,
-                        "model": asdict(model_config),
+                        "model": model_config_dict(model_config),
                         "training": asdict(settings),
                     }
                 )

@@ -1028,3 +1028,13 @@ def test_pretrain_config_hash_ignores_output_control_fields(tmp_path: Path) -> N
             progress=False,
         ),
     )
+
+
+def test_legacy_model_config_serialization_omits_new_pooling_defaults() -> None:
+    from ftrec.models.sasrec import SASRecConfig, model_config_dict
+
+    values = model_config_dict(SASRecConfig(num_items=10))
+
+    assert "attribute_pooling" not in values
+    assert "item_domain_file" not in values
+    assert "attribute_temperature" not in values
