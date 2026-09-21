@@ -169,3 +169,38 @@ bash scripts/run_content_diagnostics.sh
 保存的同一组 999 个同域负样本，并按目标物品在训练 cohort 中的出现次数报告
 `0`、`1-4`、`5-14`、`15-49`、`50-99`、`100+` 六个桶。频次统计明确排除
 valid/test cohort，因此不会用测试数据定义流行度。
+
+双塔还会先在 validation 上扫描属性权重，并用坐标搜索选择每个候选物品频次桶的
+权重，然后冻结这些权重，只运行一次 test。权重由每个候选物品自己的训练频次决定，
+不会根据测试正样本所属桶给整行候选加权，因此不泄漏目标身份。脚本也会对 ID-SASRec
+运行相同的频次诊断。
+
+## Mixed 与 domain-only 序列消融
+
+不能直接用 `joint_proportional` 对比 domain-only，因为前者包含没有目标域历史的额外
+用户，目标 cohort 和上下文长度同时发生了变化。严格的序列消融使用：
+
+- `joint_mixed_matched`：要求存在目标域历史，保留完整五域混合上下文；
+- `joint_domain`：使用完全相同的用户和目标，只保留目标域上下文。
+
+核心组包含 ID、LLM2Attr dual 和当前最佳的 structured-title fused，共六个 run：
+
+```bash
+bash scripts/run_sequence_context_ablation.sh
+```
+
+若需要覆盖全部四种内容组合：
+
+```bash
+MODEL_SET=all bash scripts/run_sequence_context_ablation.sh
+```
+
+训练完成后运行同口径诊断；双塔会同时执行 validation 自适应融合：
+
+```bash
+ACTION=diagnose bash scripts/run_sequence_context_ablation.sh
+```
+
+两组训练固定使用相同 seed、matched 目标 cohort、999 个同域候选、最多 300 epoch、
+patience 20 和学习率 `1e-4`。报告时核心量是
+`joint_mixed_matched - joint_domain`；正值表示跨域历史有帮助，负值才支持跨域负迁移。

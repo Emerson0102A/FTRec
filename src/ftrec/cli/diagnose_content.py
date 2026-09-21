@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 import torch
@@ -11,13 +12,19 @@ import torch
 from ftrec.analysis.content_diagnostics import (
     DEFAULT_FREQUENCY_LOWER_BOUNDS,
     DualTowerScoringView,
+    FrequencyAdaptiveDualTowerScoringView,
+    aggregate_domain_metrics,
     evaluate_component,
+    evaluate_domains,
     frequency_buckets,
+    item_frequency_bucket_indices,
+    select_frequency_adaptive_weights,
+    split_examples_by_frequency,
     training_item_frequencies,
 )
 from ftrec.config import load_config
 from ftrec.data.amazon import DOMAIN_BY_ID
-from ftrec.data.datasets import SequenceStore
+from ftrec.data.datasets import SequenceStore, TargetExample
 from ftrec.data.sampling import resolve_evaluation_candidates
 from ftrec.models.sasrec import SASRec, SASRecConfig
 from ftrec.reproducibility import resolve_device
@@ -33,8 +40,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--processed-dir", type=Path)
     parser.add_argument("--split", choices=("valid", "test"), default="test")
+    parser.add_argument("--method")
     parser.add_argument("--device")
     parser.add_argument("--no-progress", action="store_true")
+    parser.add_argument(
+        "--tune-adaptive-fusion",
+        action="store_true",
+        help=(
+            "select candidate-frequency fusion weights on validation and apply "
+            "them once to test; valid only for content_dual"
+        ),
+    )
+    parser.add_argument(
+        "--alpha-grid",
+        default=",".join(f"{value / 10:.1f}" for value in range(11)),
+        help="comma-separated attribute weights used by validation selection",
+    )
+    parser.add_argument("--max-coordinate-rounds", type=int, default=2)
     parser.add_argument(
         "--frequency-lower-bounds",
         default=",".join(str(value) for value in DEFAULT_FREQUENCY_LOWER_BOUNDS),
@@ -50,6 +72,49 @@ def _parse_bounds(value: str) -> tuple[int, ...]:
         raise ValueError("frequency lower bounds must be integers") from error
 
 
+def _parse_alpha_grid(value: str) -> tuple[float, ...]:
+    try:
+        return tuple(float(part.strip()) for part in value.split(",") if part.strip())
+    except ValueError as error:
+        raise ValueError("alpha grid must contain numbers") from error
+
+
+def _examples_and_candidates(
+    store: SequenceStore,
+    *,
+    split: str,
+    domains: tuple[int, ...],
+    maxlen: int,
+    method: str,
+    protocol: str,
+    negative_count: int,
+    evaluation_seed: int,
+) -> tuple[dict[int, tuple[TargetExample, ...]], dict[int, object] | None]:
+    examples = build_pretraining_examples(
+        store,
+        split=split,
+        domains=domains,
+        maxlen=maxlen,
+        method=method,
+    )
+    candidates = None
+    if protocol == "sampled":
+        split_offset = 10_000 if split == "valid" else 20_000
+        candidates = {
+            domain: resolve_evaluation_candidates(
+                store,
+                domain_examples,
+                split=split,
+                domain=domain,
+                count=negative_count,
+                evaluation_seed=evaluation_seed,
+                split_offset=split_offset,
+            )
+            for domain, domain_examples in examples.items()
+        }
+    return examples, candidates
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     experiment = load_config(args.config)
@@ -61,40 +126,30 @@ def main(argv: list[str] | None = None) -> int:
         default=0,
     )
     model_config = SASRecConfig(**{**model_values, "num_items": num_items})
-    if model_config.item_embedding_mode == "id":
-        raise ValueError("content diagnostics require a content-only model")
+    if args.tune_adaptive_fusion and model_config.item_embedding_mode != "content_dual":
+        raise ValueError("adaptive fusion tuning requires a content_dual model")
+    if args.tune_adaptive_fusion and args.split != "test":
+        raise ValueError("adaptive fusion tuning selects on valid and must report test")
     device = resolve_device(str(args.device or experiment.get("device", "cpu")))
     model = SASRec(model_config).to(device)
     loaded = load_checkpoint(args.checkpoint, model, map_location=device)
     model.eval()
 
-    method = str(experiment["method"])
+    method = str(args.method or experiment["method"])
     domains = tuple(sorted(store.items_by_domain))
-    examples_by_domain = build_pretraining_examples(
+    protocol = str(experiment.get("evaluation_protocol", "full"))
+    negative_count = int(experiment.get("num_eval_negatives", 100))
+    evaluation_seed = int(experiment.get("evaluation_seed", 2026))
+    examples_by_domain, candidates_by_domain = _examples_and_candidates(
         store,
         split=args.split,
         domains=domains,
         maxlen=model_config.maxlen,
         method=method,
+        protocol=protocol,
+        negative_count=negative_count,
+        evaluation_seed=evaluation_seed,
     )
-    protocol = str(experiment.get("evaluation_protocol", "full"))
-    negative_count = int(experiment.get("num_eval_negatives", 100))
-    evaluation_seed = int(experiment.get("evaluation_seed", 2026))
-    split_offset = 10_000 if args.split == "valid" else 20_000
-    candidates_by_domain = None
-    if protocol == "sampled":
-        candidates_by_domain = {
-            domain: resolve_evaluation_candidates(
-                store,
-                examples,
-                split=args.split,
-                domain=domain,
-                count=negative_count,
-                evaluation_seed=evaluation_seed,
-                split_offset=split_offset,
-            )
-            for domain, examples in examples_by_domain.items()
-        }
 
     buckets = frequency_buckets(_parse_bounds(args.frequency_lower_bounds))
     frequencies = training_item_frequencies(store)
@@ -103,9 +158,101 @@ def main(argv: list[str] | None = None) -> int:
             name: DualTowerScoringView(model, name).eval()
             for name in ("fusion", "title", "attribute")
         }
-    else:
+    elif model_config.item_embedding_mode == "content_fused":
         components = {"fused": model}
+    else:
+        components = {"id": model}
 
+    adaptive_selection = None
+    adaptive_model = None
+    if args.tune_adaptive_fusion:
+        validation_examples, validation_candidates = _examples_and_candidates(
+            store,
+            split="valid",
+            domains=domains,
+            maxlen=model_config.maxlen,
+            method=method,
+            protocol=protocol,
+            negative_count=negative_count,
+            evaluation_seed=evaluation_seed,
+        )
+        bucket_indices = item_frequency_bucket_indices(
+            num_items=num_items,
+            frequencies=frequencies,
+            buckets=buckets,
+        )
+        validation_bucket_counts = {bucket.label: 0 for bucket in buckets}
+        for domain_examples in validation_examples.values():
+            partitions = split_examples_by_frequency(
+                domain_examples, frequencies, buckets
+            )
+            for label, selected in partitions.items():
+                validation_bucket_counts[label] += len(selected)
+
+        evaluation_settings = {
+            "protocol": protocol,
+            "chunk_size": int(experiment.get("evaluation_chunk_size", 4096)),
+            "batch_size": int(experiment.get("evaluation_batch_size", 128)),
+            "device": device,
+            "progress": False,
+        }
+
+        def validation_score(weights: tuple[float, ...]) -> float:
+            scoring_model = FrequencyAdaptiveDualTowerScoringView(
+                model,
+                item_bucket_indices=bucket_indices,
+                attribute_weights=weights,
+            ).to(device).eval()
+            by_domain = evaluate_domains(
+                scoring_model,
+                validation_examples,
+                store.items_by_domain,
+                validation_candidates,
+                description_prefix="select-adaptive-fusion",
+                **evaluation_settings,
+            )
+            return float(aggregate_domain_metrics(by_domain)["macro_domain"]["NDCG@10"])
+
+        selection = select_frequency_adaptive_weights(
+            validation_score,
+            bucket_count=len(buckets),
+            alpha_grid=_parse_alpha_grid(args.alpha_grid),
+            tunable_buckets=tuple(
+                validation_bucket_counts[bucket.label] > 0 for bucket in buckets
+            ),
+            max_coordinate_rounds=args.max_coordinate_rounds,
+        )
+        adaptive_model = FrequencyAdaptiveDualTowerScoringView(
+            model,
+            item_bucket_indices=bucket_indices,
+            attribute_weights=selection.attribute_weights,
+        ).to(device).eval()
+        adaptive_validation = evaluate_component(
+            adaptive_model,
+            validation_examples,
+            store.items_by_domain,
+            validation_candidates,
+            description_prefix="adaptive-fusion validation",
+            frequencies=frequencies,
+            buckets=buckets,
+            progress=False,
+            protocol=protocol,
+            chunk_size=evaluation_settings["chunk_size"],
+            batch_size=evaluation_settings["batch_size"],
+            device=device,
+        )
+        adaptive_selection = {
+            **asdict(selection),
+            "selection_split": "valid",
+            "selection_metric": "macro_domain.NDCG@10",
+            "candidate_specific": True,
+            "bucket_labels": [bucket.label for bucket in buckets],
+            "validation_bucket_counts": validation_bucket_counts,
+            "validation_metrics": adaptive_validation,
+        }
+
+    # Test is intentionally untouched until every adaptive parameter has been
+    # selected and frozen from validation above.
     results = {}
     for name, scoring_model in components.items():
         results[name] = evaluate_component(
@@ -122,15 +269,31 @@ def main(argv: list[str] | None = None) -> int:
             frequencies=frequencies,
             buckets=buckets,
         )
+    if adaptive_model is not None:
+        results["adaptive_fusion"] = evaluate_component(
+            adaptive_model,
+            examples_by_domain,
+            store.items_by_domain,
+            candidates_by_domain,
+            description_prefix="adaptive-fusion test",
+            frequencies=frequencies,
+            buckets=buckets,
+            progress=bool(experiment.get("progress", True)) and not args.no_progress,
+            protocol=protocol,
+            chunk_size=int(experiment.get("evaluation_chunk_size", 4096)),
+            batch_size=int(experiment.get("evaluation_batch_size", 128)),
+            device=device,
+        )
 
     output = args.output or args.checkpoint.parent / "content-diagnostics.json"
     output.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema_version": 1,
         "checkpoint": str(args.checkpoint),
-        "checkpoint_epoch": loaded.metadata.get("epoch"),
+        "checkpoint_epoch": loaded.training_state.get("epoch"),
         "model_config": str(args.model_config),
         "experiment_config": str(args.config),
+        "method": method,
         "split": args.split,
         "evaluation_protocol": protocol,
         "evaluation_seed": evaluation_seed,
@@ -146,6 +309,7 @@ def main(argv: list[str] | None = None) -> int:
             for domain in domains
         },
         "components": results,
+        "adaptive_fusion_selection": adaptive_selection,
     }
     output.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),

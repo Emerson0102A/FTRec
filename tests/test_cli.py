@@ -176,6 +176,30 @@ def test_context_ablation_configs_match_formal_training_protocol() -> None:
         assert config["gradient_conflict"]["enabled"] is False
 
 
+def test_attribute_sequence_context_ablation_keeps_one_matched_protocol() -> None:
+    root = Path(__file__).parents[1]
+    config = yaml.safe_load(
+        (root / "configs/experiment/attribute_context_ablation.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    script = (root / "scripts/run_sequence_context_ablation.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert config["method"] == "joint_domain"
+    assert config["lr"] == pytest.approx(0.0001)
+    assert config["epochs"] == 300
+    assert config["patience"] == 20
+    assert config["evaluation_protocol"] == "sampled"
+    assert config["num_eval_negatives"] == 999
+    assert "joint_domain joint_mixed_matched" in script
+    assert "configs/model/sasrec.yaml" in script
+    assert "configs/model/sasrec_llm2attr.yaml" in script
+    assert "configs/model/sasrec_structured_title_fused.yaml" in script
+    assert "--tune-adaptive-fusion" in script
+
+
 def test_joint_proportional_config_is_the_lr1e4_control() -> None:
     root = Path(__file__).parents[1] / "configs" / "experiment"
     config = yaml.safe_load(

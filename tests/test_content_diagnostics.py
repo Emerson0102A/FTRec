@@ -5,8 +5,11 @@ import torch
 
 from ftrec.analysis.content_diagnostics import (
     DualTowerScoringView,
+    FrequencyAdaptiveDualTowerScoringView,
     aggregate_domain_metrics,
     frequency_buckets,
+    item_frequency_bucket_indices,
+    select_frequency_adaptive_weights,
     split_examples_by_frequency,
     training_item_frequencies,
 )
@@ -79,6 +82,25 @@ def test_dual_tower_views_reproduce_components_and_fusion(tmp_path):
     )
 
 
+def test_frequency_adaptive_view_weights_every_candidate_without_target_leakage(
+    tmp_path,
+):
+    model = _dual_model(tmp_path)
+    contexts = torch.tensor([[0, 1, 2]])
+    candidates = torch.tensor([[3, 4]])
+    title, attribute = model.score_components(contexts, candidates)
+    view = FrequencyAdaptiveDualTowerScoringView(
+        model,
+        item_bucket_indices=torch.tensor([0, 0, 0, 1, 0]),
+        attribute_weights=(0.0, 1.0),
+    ).eval()
+
+    scores = view.score_prepared(view.prepare_scoring(contexts), candidates)
+
+    assert torch.allclose(scores[:, 0], attribute[:, 0])
+    assert torch.allclose(scores[:, 1], title[:, 1])
+
+
 def test_frequency_counts_exclude_evaluation_cohort_and_bucket_targets():
     store = SequenceStore(
         records=(
@@ -115,3 +137,51 @@ def test_domain_metric_aggregation_reports_macro_and_user_weighted_values():
     assert summary["micro_user"]["NDCG@10"] == pytest.approx(0.6)
     assert summary["num_eval_users"] == 40
     assert summary["num_skipped_users"] == 3
+
+
+def test_item_frequency_bucket_indices_cover_unseen_and_popular_items():
+    buckets = frequency_buckets((0, 1, 5, 15))
+    indices = item_frequency_bucket_indices(
+        num_items=4,
+        frequencies={1: 1, 2: 4, 3: 5, 4: 20},
+        buckets=buckets,
+    )
+
+    assert indices.tolist() == [0, 1, 1, 2, 3]
+
+
+def test_adaptive_weight_selection_uses_global_then_coordinate_search():
+    calls = []
+
+    def evaluator(weights):
+        calls.append(weights)
+        target = (0.0, 0.5, 1.0)
+        return -sum((left - right) ** 2 for left, right in zip(weights, target))
+
+    result = select_frequency_adaptive_weights(
+        evaluator,
+        bucket_count=3,
+        alpha_grid=(0.0, 0.5, 1.0),
+        tunable_buckets=(True, True, True),
+        max_coordinate_rounds=2,
+    )
+
+    assert result.attribute_weights == (0.0, 0.5, 1.0)
+    assert result.validation_score == 0.0
+    assert result.evaluations == len(set(calls))
+    assert result.global_sweep
+    assert result.coordinate_steps
+
+
+def test_adaptive_weight_selection_keeps_empty_positive_bucket_at_global_weight():
+    result = select_frequency_adaptive_weights(
+        lambda weights: -((weights[0] - 1.0) ** 2 + (weights[1] - 0.5) ** 2),
+        bucket_count=2,
+        alpha_grid=(0.0, 0.5, 1.0),
+        tunable_buckets=(False, True),
+        max_coordinate_rounds=2,
+    )
+
+    # Global search ties at 0.5/1.0 and deterministically keeps the first one.
+    # The empty-positive bucket is not tuned independently afterwards.
+    assert result.attribute_weights == (0.5, 0.5)
