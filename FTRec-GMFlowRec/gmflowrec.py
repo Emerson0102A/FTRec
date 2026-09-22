@@ -2,8 +2,9 @@
 
 The implementation follows arXiv:2510.21021.  The paper leaves the target of
 the GMM likelihood and the sign of the reverse ODE ambiguous.  This module uses
-the mathematically consistent reverse velocity ``x_item - x_user`` and scores
-the terminal-state estimate ``x_t + t * velocity``.  See
+the mathematically consistent reverse velocity ``x_item - x_user`` and applies
+the recommendation objective directly to the expected GMM velocity, as written
+in Equation (11).  See
 ``docs/gmflowrec-reproduction.md`` for the exact correspondence and assumptions.
 """
 
@@ -375,9 +376,8 @@ class GMFlowRec(nn.Module):
         # Along x_t=(1-t)x_0+t*x_1, a reverse step uses x_0-x_1.
         reverse_velocity = target_embedding - invariant_prior
         gmm_loss = gaussian_mixture_nll(mixture, reverse_velocity)
-        terminal_estimate = latent_state + time * mixture.mean
         recommendation_loss = self._domain_softmax_nll(
-            terminal_estimate, targets, target_domains
+            mixture.mean, targets, target_domains
         )
         prior_loss = self._domain_softmax_nll(
             aligned_prior, targets, target_domains

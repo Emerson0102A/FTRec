@@ -41,7 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--eval_every", type=int, default=1)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--weight_decay", type=float, default=0.0)
     parser.add_argument("--grad_clip", type=float, default=5.0)
     parser.add_argument("--maxlen", type=int, default=50)
@@ -115,6 +115,20 @@ def load_checkpoint(model: GMFlowRec, path: str, device: torch.device) -> dict:
         raise ValueError("GMFlowRec checkpoint is missing its model state")
     model.load_state_dict(checkpoint["model"])
     return checkpoint
+
+
+def evaluate_validation_and_test(
+    model: GMFlowRec,
+    valid_loader: DataLoader,
+    test_loader: DataLoader,
+    device: torch.device,
+    steps: int,
+) -> tuple[dict, dict]:
+    """Evaluate both splits together whenever validation is scheduled."""
+
+    validation = evaluate_gmflowrec(model, valid_loader, device, steps=steps)
+    test = evaluate_gmflowrec(model, test_loader, device, steps=steps)
+    return validation, test
 
 
 def main() -> None:
@@ -237,14 +251,23 @@ def main() -> None:
             "train": {key: value / len(train_loader) for key, value in running.items()},
         }
         if epoch % args.eval_every == 0:
-            validation = evaluate_gmflowrec(
-                model, valid_loader, device, steps=args.ode_steps
+            validation, test = evaluate_validation_and_test(
+                model,
+                valid_loader,
+                test_loader,
+                device,
+                steps=args.ode_steps,
             )
             record["validation"] = validation
+            record["test"] = test
             score = validation["overall"]["ndcg@10"]
             print(
                 f"validation epoch={epoch} NDCG@10={score:.6f} "
                 f"HR@10={validation['overall']['hr@10']:.6f}"
+            )
+            print(
+                f"test epoch={epoch} NDCG@10={test['overall']['ndcg@10']:.6f} "
+                f"HR@10={test['overall']['hr@10']:.6f}"
             )
             if score > best_score:
                 best_score = score
@@ -256,6 +279,7 @@ def main() -> None:
                         "model_config": config.to_dict(),
                         "epoch": epoch,
                         "validation": validation,
+                        "test": test,
                     },
                     best_path,
                 )
@@ -271,6 +295,7 @@ def main() -> None:
     result = {
         "best_epoch": best_epoch,
         "best_validation": checkpoint["validation"],
+        "test_during_best_validation_epoch": checkpoint["test"],
         "test_at_selected_epoch": test_metrics,
         "history": history,
         "elapsed_seconds": time.time() - started,

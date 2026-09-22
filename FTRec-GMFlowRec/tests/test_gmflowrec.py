@@ -83,3 +83,32 @@ def test_training_objective_and_inference_are_finite_and_differentiable():
     assert scores.shape == (2, 3)
     assert torch.isfinite(scores).all()
 
+
+def test_recommendation_objective_scores_expected_gmm_velocity(monkeypatch):
+    model = GMFlowRec(_config())
+    items = torch.tensor([[0, 1, 5, 2, 6]])
+    domains = torch.tensor([[-1, 0, 1, 0, 1]])
+    targets = torch.tensor([3])
+    target_domains = torch.tensor([0])
+    mixture = GaussianMixtureOutput(
+        logits=torch.tensor([[0.0, 0.0]]),
+        means=torch.stack(
+            [torch.full((8,), 2.0), torch.full((8,), 4.0)]
+        ).unsqueeze(0),
+        scales=torch.ones(1, 2),
+    )
+    scored = []
+
+    monkeypatch.setattr(model, "mixture", lambda *args: mixture)
+
+    def capture_softmax(representations, *_args):
+        scored.append(representations.detach().clone())
+        return representations.square().mean()
+
+    monkeypatch.setattr(model, "_domain_softmax_nll", capture_softmax)
+    model.training_objective(
+        items, domains, targets, target_domains, time=torch.tensor([0.25])
+    )
+
+    torch.testing.assert_close(scored[0], mixture.mean)
+

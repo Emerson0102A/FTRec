@@ -17,7 +17,9 @@ for Multi-Domain Sequential Recommendation*（arXiv:2510.21021v1）完成，入�
 - 式 (4)(5)：在目标域完整物品词表上计算 domain-aligned prior 的交叉熵。
 - 式 (6)--(9)：插值状态与 invariant prior 融合，由 MLP 输出 K 个混合权重、均值和
   球形标准差。
-- 式 (10)--(12)：GMM 负对数似然、推荐损失和 prior 损失联合训练。
+- 式 (10)--(12)：GMM 负对数似然、直接作用于 GMM 期望速度 `mu` 的推荐损失，
+  以及 prior 损失联合训练。推荐损失不再使用含真实目标物品 embedding 的插值终点，
+  避免训练态目标泄漏。
 - Algorithm 2：从 invariant prior 出发，以一阶反向 Euler 求解器生成目标物品表示。
 - 论文评测协议：正样本加同域随机负样本，报告 HR/NDCG@5、@10，并同时输出每个域结果。
 
@@ -28,8 +30,8 @@ v1 原稿没有足够信息支持逐比特复现，以下不是实现疏漏，�
 1. 式 (8) 把 GMM 写成速度分布，但式 (10) 又称其似然目标为 `x0`；Algorithm 2 则把其
    均值作为速度相加。本实现采用与路径 `x_t=(1-t)x0+t*x1` 一致的反向速度
    `x0-x1` 作为 GMM 目标。
-2. 式 (11) 直接用速度预测物品，而 Algorithm 2 返回积分后的 `x0`。本实现训练时使用
-   `x_t+t*v` 的终点估计做推荐，推理时使用积分后的终态做推荐。
+2. 式 (11) 直接用速度预测物品，而 Algorithm 2 返回积分后的 `x0`。本实现严格按式 (11)
+   在训练时使用 GMM 期望速度做推荐，推理时按 Algorithm 2 使用积分后的终态做推荐。
 3. 式 (7) 没有写入时间 `t`，式 (10) 却显式以 `t` 为条件，架构图也含 `t`。本实现为
    `t` 使用两层 MLP 时间嵌入。
 4. 论文没有公布 Transformer 层数、头数、MLP 宽度、融合系数 lambda、ODE 步数、
@@ -72,8 +74,10 @@ python main_gmflowrec.py `
   --device cuda
 ```
 
-默认使用论文的 `d=64, maxlen=50, batch=256, lr=0.001, epochs=100`，验证集
-NDCG@10 选择最佳 checkpoint。为了复核论文结果，应对 `alpha、beta、K、dropout` 和
+默认使用论文正文的 `d=64, maxlen=50, batch=256, lr=0.0001, epochs=100`，验证集
+NDCG@10 选择最佳 checkpoint。每次执行验证评估时也会同步执行一次测试集评估并写入
+`history[*].test`；checkpoint 选择仍然只依据验证集，测试集不会参与 early stopping。
+为了复核论文结果，应对 `alpha、beta、K、dropout` 和
 上述未公布参数做验证集搜索，并至少运行五个随机种子。
 
 上面的 `..\..\data\MDSR-Amazon` 是当前 `.worktrees/gmflowrec-reproduction`
