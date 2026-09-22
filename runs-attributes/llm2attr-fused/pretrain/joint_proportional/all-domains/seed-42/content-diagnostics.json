@@ -1,6 +1,7 @@
 {
+  "adaptive_fusion_selection": null,
   "checkpoint": "runs-attributes/llm2attr-fused/pretrain/joint_proportional/all-domains/seed-42/best.pt",
-  "checkpoint_epoch": null,
+  "checkpoint_epoch": 258,
   "components": {
     "fused": {
       "by_domain": {
@@ -410,6 +411,7 @@
     50,
     100
   ],
+  "method": "joint_proportional",
   "model_config": "configs/model/sasrec_llm2attr_fused.yaml",
   "num_eval_negatives": 999,
   "schema_version": 1,
