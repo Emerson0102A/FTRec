@@ -156,6 +156,10 @@ rank 下 LoRA 参数量约为单塔的两倍；结果表必须同时报告总参
 不能把这项架构差异隐藏起来。建议先完成 seed 42 的可行性实验，再扩为相同的 5 个
 seeds，并额外报告按训练频次分桶的 head/medium/tail 指标。
 
+上述命令保留用于原四模型 mixed-context 对比。Structured fused 的正式
+domain-only 微调不要复用该配置；它使用零初始化内容 adapter、SASRec LoRA 及两个
+单独消融，详见 `docs/structured-fused-target-only-finetuning.md`。
+
 ## 主干训练后的内容诊断
 
 四组主干结束后，在微调前统一运行：

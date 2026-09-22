@@ -29,6 +29,10 @@ from ftrec.data.sampling import (
 )
 from ftrec.evaluation.ranking import evaluate_model
 from ftrec.models.adapters import adapter_parameter_names, inject_adapters
+from ftrec.models.content_adapter import (
+    content_adapter_parameter_names,
+    inject_fused_content_adapter,
+)
 from ftrec.models.embedding_adapter import (
     inject_target_embedding_adapter,
     target_embedding_parameter_names,
@@ -56,6 +60,7 @@ class AdaptSettings:
     rank: int | None = None
     alpha: float | None = None
     bottleneck_size: int | None = None
+    content_bottleneck_size: int | None = None
     seed: int = 42
     batch_size: int = 128
     steps_per_epoch: int | None = 100
@@ -83,7 +88,9 @@ class AdaptSettings:
         if self.method not in {
             "lora",
             "lora_all",
+            "lora_all_content_adapter",
             "lora_all_embedding",
+            "content_adapter",
             "embedding",
             "houlsby",
             "pfeiffer",
@@ -102,6 +109,7 @@ class AdaptSettings:
         if self.method in {
             "lora",
             "lora_all",
+            "lora_all_content_adapter",
             "lora_all_embedding",
         }:
             if self.rank is None or self.rank < 1:
@@ -119,6 +127,15 @@ class AdaptSettings:
             raise ValueError("rank and alpha are only valid for LoRA")
         elif self.bottleneck_size is not None:
             raise ValueError("bottleneck_size is only valid for bottleneck adapters")
+        if self.method in {"content_adapter", "lora_all_content_adapter"}:
+            if self.content_bottleneck_size is None or self.content_bottleneck_size < 1:
+                raise ValueError(
+                    "content adaptation requires a positive content_bottleneck_size"
+                )
+        elif self.content_bottleneck_size is not None:
+            raise ValueError(
+                "content_bottleneck_size is only valid for content adaptation"
+            )
         for name in ("batch_size", "epochs", "patience"):
             if getattr(self, name) < 1:
                 raise ValueError(f"{name} must be positive")
@@ -152,6 +169,7 @@ def is_lora_method(method: str) -> bool:
     return method in {
         "lora",
         "lora_all",
+        "lora_all_content_adapter",
         "lora_all_embedding",
     }
 
@@ -160,7 +178,9 @@ def is_parameter_efficient_method(method: str) -> bool:
     return method in {
         "lora",
         "lora_all",
+        "lora_all_content_adapter",
         "lora_all_embedding",
+        "content_adapter",
         "embedding",
         "houlsby",
         "pfeiffer",
@@ -172,10 +192,14 @@ def target_modules_for_method(method: str) -> tuple[str, ...]:
         return LORA_SCOPES["qv"]
     if method == "lora_all":
         return LORA_SCOPES["all_linear"]
+    if method == "lora_all_content_adapter":
+        return (*LORA_SCOPES["all_linear"], "fused_content_adapter")
     if method == "lora_all_embedding":
         return (*LORA_SCOPES["all_linear"], "target_item_embedding")
     if method == "embedding":
         return ("target_item_embedding",)
+    if method == "content_adapter":
+        return ("fused_content_adapter",)
     if method == "houlsby":
         return ("attention_adapter", "ffn_adapter")
     if method == "pfeiffer":
@@ -204,6 +228,8 @@ def adapt_config_hash(model_config: SASRecConfig, settings: AdaptSettings) -> st
     # otherwise identical completed run look conflicting.
     if training.get("bottleneck_size") is None:
         training.pop("bottleneck_size")
+    if training.get("content_bottleneck_size") is None:
+        training.pop("content_bottleneck_size")
     if training.get("num_train_negatives") == 1:
         training.pop("num_train_negatives")
     if training.get("context_mode") == "mixed":
@@ -329,7 +355,27 @@ def train_adaptation(
         assert settings.rank is not None and settings.alpha is not None
         scope = "qv" if settings.method == "lora" else "all_linear"
         inject_lora(model, settings.rank, settings.alpha, scope=scope)
-        if settings.method == "lora_all_embedding":
+        if settings.method == "lora_all_content_adapter":
+            assert settings.content_bottleneck_size is not None
+            inject_fused_content_adapter(
+                model,
+                bottleneck_size=settings.content_bottleneck_size,
+                freeze_existing=False,
+            )
+            trainable_names = tuple(
+                name
+                for name, parameter in model.named_parameters()
+                if parameter.requires_grad
+            )
+            content_names = content_adapter_parameter_names(model)
+            if not content_names:
+                raise RuntimeError("fused content adapter is not trainable")
+            if any(
+                ".lora_" not in name and name not in content_names
+                for name in trainable_names
+            ):
+                raise RuntimeError("unexpected parameters are trainable")
+        elif settings.method == "lora_all_embedding":
             embedding_adapter = inject_target_embedding_adapter(
                 model,
                 store.items_by_domain[settings.domain],
@@ -358,6 +404,21 @@ def train_adaptation(
         )
         if trainable_names != expected_names:
             raise RuntimeError("non-LoRA parameters are trainable")
+    elif settings.method == "content_adapter":
+        assert settings.content_bottleneck_size is not None
+        inject_fused_content_adapter(
+            model,
+            bottleneck_size=settings.content_bottleneck_size,
+            freeze_existing=True,
+        )
+        trainable_names = content_adapter_parameter_names(model)
+        expected_names = tuple(
+            name
+            for name, parameter in model.named_parameters()
+            if parameter.requires_grad
+        )
+        if not trainable_names or trainable_names != expected_names:
+            raise RuntimeError("non-content-adapter parameters are trainable")
     elif settings.method == "embedding":
         embedding_adapter = inject_target_embedding_adapter(
             model,
@@ -427,6 +488,7 @@ def train_adaptation(
     metadata = {
         "alpha": settings.alpha,
         "bottleneck_size": settings.bottleneck_size,
+        "content_bottleneck_size": settings.content_bottleneck_size,
         "base_hash": base_hash,
         "config_hash": config_hash,
         "context_mode": settings.context_mode,
@@ -710,6 +772,7 @@ def train_adaptation(
                 "pretrain_method": settings.pretrain_method,
                 "rank": settings.rank,
                 "bottleneck_size": settings.bottleneck_size,
+                "content_bottleneck_size": settings.content_bottleneck_size,
                 "seed": settings.seed,
             }
         )

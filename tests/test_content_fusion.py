@@ -10,6 +10,10 @@ from torch import nn
 from ftrec.attributes.artifacts import create_embedding_arrays, finish_artifact
 from ftrec.data.datasets import TargetExample
 from ftrec.models.lora import count_trainable_parameters, inject_lora
+from ftrec.models.content_adapter import (
+    content_adapter_parameter_names,
+    inject_fused_content_adapter,
+)
 from ftrec.models.sasrec import SASRec, SASRecConfig
 from ftrec.training.objectives import sampled_bce_loss
 from ftrec.training.pretrain import _task_loss
@@ -391,6 +395,46 @@ def test_lora_freezes_content_encoders_and_dual_has_two_tower_adapters(tmp_path)
     assert not any("item_encoder" in name for name in dual_trainable)
     assert not any("item_encoder" in name for name in fused_trainable)
     assert count_trainable_parameters(dual) == 2 * count_trainable_parameters(fused)
+
+
+def test_fused_content_adapter_is_zero_initialized_and_composes_with_lora(tmp_path):
+    model = _model(tmp_path, "content_fused").eval()
+    contexts = torch.tensor([[0, 1, 2]])
+    candidates = torch.tensor([[3, 1]])
+    baseline = model.score(contexts, candidates).detach().clone()
+
+    inject_lora(model, rank=2, alpha=2, scope="all_linear")
+    adapter = inject_fused_content_adapter(
+        model,
+        bottleneck_size=2,
+        freeze_existing=False,
+    )
+    adapted = model.score(contexts, candidates)
+
+    torch.testing.assert_close(adapted, baseline)
+    trainable = tuple(
+        name for name, parameter in model.named_parameters() if parameter.requires_grad
+    )
+    content_names = content_adapter_parameter_names(model)
+    assert content_names
+    assert all(
+        ".lora_" in name or name in content_names
+        for name in trainable
+    )
+
+    model.train()
+    model.score(contexts, candidates).sum().backward()
+    assert adapter.up.weight.grad is not None
+
+
+def test_fused_content_adapter_rejects_non_fused_model(tmp_path):
+    model = _model(tmp_path, "content_dual")
+    with pytest.raises(ValueError, match="content_fused"):
+        inject_fused_content_adapter(
+            model,
+            bottleneck_size=2,
+            freeze_existing=True,
+        )
 
 
 def test_evaluation_cache_reuses_catalog_item_representations(tmp_path):

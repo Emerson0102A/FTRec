@@ -449,6 +449,7 @@ def test_legacy_lora_hash_omits_inapplicable_bottleneck_field(tmp_path: Path) ->
         "force",
         "progress",
         "bottleneck_size",
+        "content_bottleneck_size",
         "num_train_negatives",
         "context_mode",
         "min_domain_sequence_length",

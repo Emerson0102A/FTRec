@@ -180,6 +180,37 @@ def test_attribute_pretraining_configs_allow_late_convergence() -> None:
         assert config["patience"] == 20
 
 
+def test_structured_fused_target_only_adaptation_matrix_is_controlled() -> None:
+    from ftrec.config import load_config
+
+    root = Path(__file__).parents[1] / "configs" / "experiment"
+    expected = {
+        "attribute_structured_title_fused_target_only_content": "content_adapter",
+        "attribute_structured_title_fused_target_only_lora": "lora_all",
+        "attribute_structured_title_fused_target_only_joint": (
+            "lora_all_content_adapter"
+        ),
+        "attribute_structured_title_fused_target_only_fullft": "fullft",
+    }
+    for name, method in expected.items():
+        config = load_config(root / f"{name}.yaml")
+        assert config["base_root"] == "runs-attributes/structured-title-fused"
+        assert config["method"] == method
+        assert config["pretrain_methods"] == ["joint_proportional"]
+        assert config["domains"] == [0, 1, 2, 3, 4]
+        assert config["seeds"] == [42]
+        assert config["context_mode"] == "target_only"
+        assert config["min_domain_sequence_length"] == 2
+        assert config["num_train_negatives"] == 31
+        assert config["num_eval_negatives"] == 999
+    assert load_config(
+        root / "attribute_structured_title_fused_target_only_content.yaml"
+    )["content_bottleneck_size"] == 16
+    assert load_config(
+        root / "attribute_structured_title_fused_target_only_joint.yaml"
+    )["content_bottleneck_size"] == 16
+
+
 def test_llm2attr_pooling_ablation_configs_are_explicit() -> None:
     from ftrec.config import load_config
 

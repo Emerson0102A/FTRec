@@ -36,7 +36,9 @@ def build_parser() -> argparse.ArgumentParser:
         choices=(
             "lora",
             "lora_all",
+            "lora_all_content_adapter",
             "lora_all_embedding",
+            "content_adapter",
             "embedding",
             "houlsby",
             "pfeiffer",
@@ -52,6 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ranks", type=int, nargs="+")
     parser.add_argument("--bottleneck-size", type=int)
     parser.add_argument("--bottleneck-sizes", type=int, nargs="+")
+    parser.add_argument("--content-bottleneck-size", type=int)
     parser.add_argument("--seed", type=int)
     parser.add_argument("--epochs", type=int)
     parser.add_argument("--steps-per-epoch", type=int)
@@ -223,6 +226,15 @@ def main(argv: list[str] | None = None) -> int:
                         rank=rank,
                         alpha=alpha,
                         bottleneck_size=bottleneck_size,
+                        content_bottleneck_size=(
+                            args.content_bottleneck_size
+                            if args.content_bottleneck_size is not None
+                            else (
+                                int(config["content_bottleneck_size"])
+                                if config.get("content_bottleneck_size") is not None
+                                else None
+                            )
+                        ),
                         seed=seed,
                         batch_size=int(config["batch_size"]),
                         steps_per_epoch=_steps_per_epoch(
@@ -303,6 +315,7 @@ def main(argv: list[str] | None = None) -> int:
                         "pretrain_method": pretrain_method,
                         "rank": rank,
                         "bottleneck_size": bottleneck_size,
+                        "content_bottleneck_size": settings.content_bottleneck_size,
                         "seed": seed,
                     }
                     reports.append(report)

@@ -210,6 +210,9 @@ class FusedContentItemEncoder(nn.Module):
         self.attribute_title_query: nn.Linear | None = None
         self.domain_title_queries: nn.ModuleList | None = None
         self.domain_queries: nn.Parameter | None = None
+        # Injected only during target-domain adaptation.  Keeping this absent
+        # from the pretrained architecture preserves existing checkpoint keys.
+        self.content_adapter: nn.Module | None = None
         self.num_domains = 0
 
         if attribute_pooling == "hard_top1":
@@ -328,6 +331,8 @@ class FusedContentItemEncoder(nn.Module):
         else:
             attributes, _ = self.pool_attribute_embeddings(ids, title)
         fused = self.output_norm(title + attributes)
+        if self.content_adapter is not None:
+            fused = self.content_adapter(fused)
         available = self.title_encoder.content_present[ids] & ids.ne(0)
         return fused * available.unsqueeze(-1).to(fused.dtype)
 
