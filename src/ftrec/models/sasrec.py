@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass
 
 import torch
 from torch import nn
 
-from .attention import SASRecBlock
+from .attention import PostNormSASRecBlock, SASRecBlock
 from .content_encoder import (
     ATTRIBUTE_POOLING_MODES,
     AttributeItemEncoder,
     FusedContentItemEncoder,
+    SharedPrivateBehaviorItemEncoder,
     TitleItemEncoder,
     load_content_artifact,
 )
@@ -20,7 +22,12 @@ if False:  # pragma: no cover - imported only for static type checkers
     from .embedding_adapter import TargetEmbeddingAdapter
 
 
-ITEM_EMBEDDING_MODES = ("id", "content_dual", "content_fused")
+ITEM_EMBEDDING_MODES = (
+    "id",
+    "content_dual",
+    "content_fused",
+    "mymodel4_behavior",
+)
 
 
 @dataclass(frozen=True)
@@ -36,6 +43,9 @@ class SASRecConfig:
     attribute_pooling: str = "hard_top1"
     item_domain_file: str | None = None
     attribute_temperature: float = 1.0
+    shared_behavior_blocks: int = 1
+    content_projection_size: int = 0
+    domain_embedding_scale: float = 0.1
 
     def __post_init__(self) -> None:
         if self.num_items < 1 or self.hidden_size < 1 or self.num_blocks < 1:
@@ -67,6 +77,10 @@ class SASRecConfig:
             )
         if self.attribute_temperature <= 0:
             raise ValueError("attribute_temperature must be positive")
+        if self.content_projection_size < 0:
+            raise ValueError("content_projection_size must be non-negative")
+        if self.domain_embedding_scale < 0:
+            raise ValueError("domain_embedding_scale must be non-negative")
         if (
             self.attribute_pooling != "hard_top1"
             and self.item_embedding_mode != "content_fused"
@@ -75,14 +89,24 @@ class SASRecConfig:
                 "non-hard attribute pooling is currently defined only for "
                 "content_fused"
             )
-        needs_domains = self.attribute_pooling == "domain_title_attention"
+        needs_domains = (
+            self.attribute_pooling == "domain_title_attention"
+            or self.item_embedding_mode == "mymodel4_behavior"
+        )
         if needs_domains and self.item_domain_file is None:
             raise ValueError(
-                "domain_title_attention requires item_domain_file"
+                "domain-conditioned content models require item_domain_file"
             )
         if not needs_domains and self.item_domain_file is not None:
             raise ValueError(
-                "item_domain_file is only used by domain_title_attention"
+                "item_domain_file is only used by domain-conditioned content models"
+            )
+        if self.item_embedding_mode == "mymodel4_behavior" and not (
+            0 <= self.shared_behavior_blocks < self.num_blocks
+        ):
+            raise ValueError(
+                "mymodel4_behavior requires shared_behavior_blocks in "
+                "[0, num_blocks)"
             )
 
 
@@ -98,6 +122,14 @@ def model_config_dict(config: SASRecConfig) -> dict[str, object]:
         values.pop("attribute_pooling")
         values.pop("item_domain_file")
         values.pop("attribute_temperature")
+    if config.item_embedding_mode != "mymodel4_behavior":
+        values.pop("shared_behavior_blocks")
+        values.pop("content_projection_size")
+        values.pop("domain_embedding_scale")
+    else:
+        # MyModel4 always uses its own domain/title-conditioned soft attention;
+        # the legacy fused-encoder pooling switch is not part of this model.
+        values.pop("attribute_pooling")
     return values
 
 
@@ -194,6 +226,148 @@ class _ContentSASRecTower(nn.Module):
         )
 
 
+class _SharedPrivateContentSASRecTower(nn.Module):
+    """MyModel4 Behavior backbone with target-domain private upper blocks."""
+
+    def __init__(
+        self, config: SASRecConfig, item_encoder: SharedPrivateBehaviorItemEncoder
+    ) -> None:
+        super().__init__()
+        self.config = config
+        self.item_encoder = item_encoder
+        self._evaluation_item_cache: torch.Tensor | None = None
+        self.position_embedding = nn.Embedding(config.maxlen + 1, config.hidden_size, padding_idx=0)
+        self.embedding_dropout = nn.Dropout(config.dropout)
+        self.shared_blocks = nn.ModuleList(
+            PostNormSASRecBlock(config.hidden_size, config.num_heads, config.dropout)
+            for _ in range(config.shared_behavior_blocks)
+        )
+        private_count = config.num_blocks - config.shared_behavior_blocks
+        self.private_blocks = nn.ModuleList(
+            nn.ModuleList(
+                PostNormSASRecBlock(config.hidden_size, config.num_heads, config.dropout)
+                for _ in range(private_count)
+            )
+            for _ in range(item_encoder.num_domains)
+        )
+        self.final_norms = nn.ModuleList(
+            nn.LayerNorm(config.hidden_size, eps=1e-8) for _ in range(item_encoder.num_domains)
+        )
+
+    def prepare_evaluation_cache(self, *, chunk_size: int = 4096) -> None:
+        if self.training:
+            raise RuntimeError("evaluation cache requires eval mode")
+        if self._evaluation_item_cache is not None:
+            return
+        if chunk_size < 1:
+            raise ValueError("evaluation cache chunk_size must be positive")
+        device = self.position_embedding.weight.device
+        cache: torch.Tensor | None = None
+        with torch.no_grad():
+            for start in range(0, self.config.num_items + 1, chunk_size):
+                stop = min(start + chunk_size, self.config.num_items + 1)
+                item_ids = torch.arange(start, stop, device=device)
+                encoded = self.item_encoder(item_ids)
+                if cache is None:
+                    cache = torch.empty(
+                        (self.config.num_items + 1, encoded.shape[-1]),
+                        dtype=encoded.dtype,
+                        device=encoded.device,
+                    )
+                cache[start:stop].copy_(encoded)
+        if cache is None:  # pragma: no cover - num_items is positive
+            raise RuntimeError("failed to construct evaluation item cache")
+        self._evaluation_item_cache = cache
+
+    def clear_evaluation_cache(self) -> None:
+        self._evaluation_item_cache = None
+
+    def target_domains(self, candidate_ids: torch.Tensor, *, batch_size: int) -> torch.Tensor:
+        domains = self.item_encoder.get_domain_ids(candidate_ids)
+        if candidate_ids.ndim == 1:
+            present = torch.unique(domains[domains.ne(0)])
+            if present.numel() != 1:
+                raise ValueError("shared candidate vector must belong to one domain")
+            return present.expand(batch_size)
+        if candidate_ids.ndim != 2 or candidate_ids.shape[0] != batch_size:
+            raise ValueError("candidate_ids must have shape [candidates] or [batch, candidates]")
+        target = domains.max(dim=1).values
+        if torch.any(target.eq(0)):
+            raise ValueError("each candidate row must contain a non-padding item")
+        compatible = domains.eq(0) | domains.eq(target.unsqueeze(1))
+        if not torch.all(compatible):
+            raise ValueError("each candidate row must contain one target domain")
+        return target
+
+    def encode(self, item_ids: torch.Tensor, target_domains: torch.Tensor) -> torch.Tensor:
+        if item_ids.ndim != 2:
+            raise ValueError("item_ids must have shape [batch, length]")
+        if item_ids.shape[1] > self.config.maxlen:
+            raise ValueError("sequence exceeds configured maxlen")
+        if target_domains.shape != (item_ids.shape[0],):
+            raise ValueError("target_domains must have shape [batch]")
+        if torch.any(target_domains < 1) or torch.any(
+            target_domains > self.item_encoder.num_domains
+        ):
+            raise ValueError("target domain is outside the content catalog")
+        valid = item_ids.ne(0)
+        positions = torch.arange(1, item_ids.shape[1] + 1, device=item_ids.device).unsqueeze(0)
+        positions = positions.expand_as(item_ids) * valid.long()
+        outputs = self.item_encoder(item_ids) * math.sqrt(self.config.hidden_size)
+        outputs = self.embedding_dropout(outputs + self.position_embedding(positions))
+        outputs = outputs.masked_fill(~valid.unsqueeze(-1), 0.0)
+        for block in self.shared_blocks:
+            outputs = block(outputs, valid)
+        routed = torch.zeros_like(outputs)
+        for mapped_domain in range(1, self.item_encoder.num_domains + 1):
+            rows = target_domains.eq(mapped_domain)
+            if not torch.any(rows):
+                continue
+            private = outputs[rows]
+            for block in self.private_blocks[mapped_domain - 1]:
+                private = block(private, valid[rows])
+            routed[rows] = self.final_norms[mapped_domain - 1](private)
+        return routed.masked_fill(~valid.unsqueeze(-1), 0.0)
+
+    def final_state(self, item_ids: torch.Tensor, candidate_ids: torch.Tensor) -> torch.Tensor:
+        target_domains = self.target_domains(candidate_ids, batch_size=item_ids.shape[0])
+        encoded = self.encode(item_ids, target_domains)
+        if torch.any(item_ids.ne(0).sum(dim=1).eq(0)):
+            raise ValueError("every context must contain at least one non-padding item")
+        return encoded[:, -1, :]
+
+    def score_prepared(self, states: torch.Tensor, candidate_ids: torch.Tensor) -> torch.Tensor:
+        candidates = (
+            self._evaluation_item_cache[candidate_ids]
+            if self._evaluation_item_cache is not None
+            else self.item_encoder(candidate_ids)
+        )
+        if candidates.ndim == 2:
+            return states @ candidates.transpose(0, 1)
+        if candidates.ndim == 3:
+            return torch.einsum("bd,bcd->bc", states, candidates)
+        raise ValueError("candidate_ids must have shape [candidates] or [batch, candidates]")
+
+    def private_parameter_owners(self) -> dict[str, int]:
+        owners_by_identity: dict[int, int] = {}
+        for mapped_domain in range(1, self.item_encoder.num_domains + 1):
+            raw_domain = self.item_encoder.raw_domain_for_mapped(mapped_domain)
+            parameters = list(self.item_encoder.private_parameters(mapped_domain))
+            parameters.extend(
+                parameter
+                for block in self.private_blocks[mapped_domain - 1]
+                for parameter in block.parameters()
+            )
+            parameters.extend(self.final_norms[mapped_domain - 1].parameters())
+            for parameter in parameters:
+                owners_by_identity[id(parameter)] = raw_domain
+        return {
+            name: owners_by_identity[id(parameter)]
+            for name, parameter in self.named_parameters()
+            if id(parameter) in owners_by_identity
+        }
+
+
 class SASRec(nn.Module):
     def __init__(self, config: SASRecConfig) -> None:
         super().__init__()
@@ -203,6 +377,7 @@ class SASRec(nn.Module):
         self.title_tower: _ContentSASRecTower | None = None
         self.attribute_tower: _ContentSASRecTower | None = None
         self.fused_tower: _ContentSASRecTower | None = None
+        self.shared_private_tower: _SharedPrivateContentSASRecTower | None = None
 
         if config.item_embedding_mode == "id":
             # Keep these names unchanged for existing baseline checkpoints.
@@ -235,7 +410,7 @@ class SASRec(nn.Module):
                     config,
                     AttributeItemEncoder(artifact, hidden_size=config.hidden_size),
                 )
-            else:
+            elif config.item_embedding_mode == "content_fused":
                 self.fused_tower = _ContentSASRecTower(
                     config,
                     FusedContentItemEncoder(
@@ -246,11 +421,26 @@ class SASRec(nn.Module):
                         attribute_temperature=config.attribute_temperature,
                     ),
                 )
+            else:
+                assert config.item_domain_file is not None
+                self.shared_private_tower = _SharedPrivateContentSASRecTower(
+                    config,
+                    SharedPrivateBehaviorItemEncoder(
+                        artifact,
+                        hidden_size=config.hidden_size,
+                        item_domain_file=config.item_domain_file,
+                        projection_size=config.content_projection_size,
+                        domain_embedding_scale=config.domain_embedding_scale,
+                        attribute_temperature=config.attribute_temperature,
+                    ),
+                )
         self.reset_parameters()
         if self.fused_tower is not None:
             encoder = self.fused_tower.item_encoder
             if isinstance(encoder, FusedContentItemEncoder):
                 encoder.reset_pooling_parameters()
+        if self.shared_private_tower is not None:
+            self.shared_private_tower.item_encoder.reset_attribute_conditioning()
 
     @property
     def is_content_model(self) -> bool:
@@ -264,9 +454,17 @@ class SASRec(nn.Module):
         elif self.config.item_embedding_mode == "content_fused":
             assert self.fused_tower is not None
             self.fused_tower.prepare_evaluation_cache(chunk_size=chunk_size)
+        elif self.config.item_embedding_mode == "mymodel4_behavior":
+            assert self.shared_private_tower is not None
+            self.shared_private_tower.prepare_evaluation_cache(chunk_size=chunk_size)
 
     def clear_evaluation_cache(self) -> None:
-        for tower in (self.title_tower, self.attribute_tower, self.fused_tower):
+        for tower in (
+            self.title_tower,
+            self.attribute_tower,
+            self.fused_tower,
+            self.shared_private_tower,
+        ):
             if tower is not None:
                 tower.clear_evaluation_cache()
 
@@ -332,7 +530,7 @@ class SASRec(nn.Module):
         ]
 
     def prepare_scoring(
-        self, contexts: torch.Tensor
+        self, contexts: torch.Tensor, candidate_ids: torch.Tensor | None = None
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         if self.config.item_embedding_mode == "id":
             return self.final_state(contexts)
@@ -342,8 +540,13 @@ class SASRec(nn.Module):
                 self.title_tower.final_state(contexts),
                 self.attribute_tower.final_state(contexts),
             )
-        assert self.fused_tower is not None
-        return self.fused_tower.final_state(contexts)
+        if self.config.item_embedding_mode == "content_fused":
+            assert self.fused_tower is not None
+            return self.fused_tower.final_state(contexts)
+        assert self.shared_private_tower is not None
+        if candidate_ids is None:
+            raise ValueError("mymodel4_behavior scoring requires candidate_ids")
+        return self.shared_private_tower.final_state(contexts, candidate_ids)
 
     def score_prepared(
         self,
@@ -374,13 +577,16 @@ class SASRec(nn.Module):
             return 0.5 * title_score + 0.5 * attribute_score
         if not isinstance(prepared, torch.Tensor):
             raise TypeError("fused scoring expects one prepared state tensor")
-        assert self.fused_tower is not None
-        return self.fused_tower.score_prepared(prepared, candidate_ids)
+        if self.config.item_embedding_mode == "content_fused":
+            assert self.fused_tower is not None
+            return self.fused_tower.score_prepared(prepared, candidate_ids)
+        assert self.shared_private_tower is not None
+        return self.shared_private_tower.score_prepared(prepared, candidate_ids)
 
     def score_components(
         self, contexts: torch.Tensor, candidate_ids: torch.Tensor
     ) -> tuple[torch.Tensor, ...]:
-        prepared = self.prepare_scoring(contexts)
+        prepared = self.prepare_scoring(contexts, candidate_ids)
         if self.config.item_embedding_mode != "content_dual":
             return (self.score_prepared(prepared, candidate_ids),)
         assert isinstance(prepared, tuple)
@@ -412,8 +618,22 @@ class SASRec(nn.Module):
         if self.config.item_embedding_mode == "content_dual":
             assert self.title_tower is not None and self.attribute_tower is not None
             return (self.title_tower.blocks, self.attribute_tower.blocks)
-        assert self.fused_tower is not None
-        return (self.fused_tower.blocks,)
+        if self.config.item_embedding_mode == "content_fused":
+            assert self.fused_tower is not None
+            return (self.fused_tower.blocks,)
+        assert self.shared_private_tower is not None
+        return (
+            self.shared_private_tower.shared_blocks,
+            *tuple(self.shared_private_tower.private_blocks),
+        )
+
+    def private_parameter_owners(self) -> dict[str, int]:
+        if self.shared_private_tower is None:
+            return {}
+        return {
+            f"shared_private_tower.{name}": domain
+            for name, domain in self.shared_private_tower.private_parameter_owners().items()
+        }
 
     def optimizer_parameter_groups(self) -> dict[str, list[nn.Parameter]]:
         if self.config.item_embedding_mode != "id":
@@ -458,7 +678,7 @@ class SASRec(nn.Module):
                 ("title_tower.", self.title_tower.blocks),
                 ("attribute_tower.", self.attribute_tower.blocks),
             )
-        else:
+        elif self.config.item_embedding_mode == "content_fused":
             assert self.fused_tower is not None
             groups = {
                 "fused_content_encoder": ("fused_tower.item_encoder",),
@@ -467,6 +687,21 @@ class SASRec(nn.Module):
                 ),
             }
             prefixes = (("fused_tower.", self.fused_tower.blocks),)
+        else:
+            assert self.shared_private_tower is not None
+            groups = {
+                "shared_private_content_encoder": ("shared_private_tower.item_encoder",),
+                "shared_private_position_embedding": (
+                    "shared_private_tower.position_embedding.weight",
+                ),
+                "shared_behavior_blocks": ("shared_private_tower.shared_blocks",),
+            }
+            for domain_index in range(len(self.shared_private_tower.private_blocks)):
+                groups[f"private_behavior_domain_{domain_index}"] = (
+                    f"shared_private_tower.private_blocks.{domain_index}",
+                    f"shared_private_tower.final_norms.{domain_index}",
+                )
+            prefixes = ()
 
         for prefix, blocks in prefixes:
             label_prefix = prefix.replace(".", "_")

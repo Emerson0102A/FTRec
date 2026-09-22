@@ -417,6 +417,38 @@ def test_joint_domain_uses_the_unprojected_joint_optimizer_update() -> None:
         torch.testing.assert_close(joint_domain.state_dict()[name], expected, rtol=0, atol=0)
 
 
+def test_shared_private_gradient_reducer_keeps_full_owner_gradient() -> None:
+    from ftrec.training.pcgrad import TaskGradients
+    from ftrec.training.pretrain import combine_multitask_gradients
+
+    names = ("shared", "private_domain_0", "private_domain_1")
+    tasks = (
+        TaskGradients(
+            names,
+            (torch.tensor(1.0), torch.tensor(10.0), None),
+        ),
+        TaskGradients(
+            names,
+            (torch.tensor(3.0), torch.tensor(50.0), torch.tensor(70.0)),
+        ),
+    )
+
+    combined = combine_multitask_gradients(
+        tasks,
+        method="joint_domain",
+        domain_batch_sizes=(1, 1),
+        task_domains=(0, 1),
+        private_parameter_owners={
+            "private_domain_0": 0,
+            "private_domain_1": 1,
+        },
+    )
+
+    torch.testing.assert_close(combined.values[0], torch.tensor(2.0))
+    torch.testing.assert_close(combined.values[1], torch.tensor(10.0))
+    torch.testing.assert_close(combined.values[2], torch.tensor(70.0))
+
+
 def test_joint_proportional_weights_domain_gradients_by_microbatch_size() -> None:
     """Catch proportional batches being reduced with the balanced task mean."""
     from ftrec.training.pcgrad import TaskGradients
@@ -647,6 +679,7 @@ def test_joint_pretraining_run_writes_checkpoints_metrics_and_gradients(
             device="cpu",
             evaluation_protocol="sampled",
             num_eval_negatives=1,
+            evaluate_test_each_epoch=True,
         ),
     )
 
@@ -691,6 +724,14 @@ def test_joint_pretraining_run_writes_checkpoints_metrics_and_gradients(
         "Grocery",
         "Sports",
     }
+    assert set(epoch["test_monitor_by_name"]) == {
+        "Health",
+        "Clothing",
+        "Beauty",
+        "Grocery",
+        "Sports",
+    }
+    assert epoch["test_monitor_macro_ndcg"] >= 0
     for domain_id, domain_name in epoch["domain_names"].items():
         assert epoch["domain_losses_by_name"][domain_name] == epoch["domain_losses"][
             domain_id
@@ -1038,3 +1079,6 @@ def test_legacy_model_config_serialization_omits_new_pooling_defaults() -> None:
     assert "attribute_pooling" not in values
     assert "item_domain_file" not in values
     assert "attribute_temperature" not in values
+    assert "shared_behavior_blocks" not in values
+    assert "content_projection_size" not in values
+    assert "domain_embedding_scale" not in values

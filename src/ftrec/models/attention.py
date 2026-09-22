@@ -90,3 +90,33 @@ class SASRecBlock(nn.Module):
             ffn_output = self.ffn_adapter(ffn_output)
         outputs = outputs + ffn_output
         return outputs.masked_fill(~valid_tokens.unsqueeze(-1), 0.0)
+
+
+class PostNormSASRecBlock(nn.Module):
+    """MyModel4-compatible post-norm SASRec block.
+
+    The projections deliberately keep the same explicit module names as the
+    existing block so later LoRA experiments can target Q/K/V/O and FFN
+    layers without a second adapter implementation.
+    """
+
+    def __init__(self, hidden_size: int, num_heads: int, dropout: float) -> None:
+        super().__init__()
+        self.attention_norm = nn.LayerNorm(hidden_size, eps=1e-8)
+        self.attention = CausalSelfAttention(hidden_size, num_heads, dropout)
+        self.ffn_norm = nn.LayerNorm(hidden_size, eps=1e-8)
+        self.ffn = PointWiseFeedForward(hidden_size, dropout)
+        self.attention_adapter: nn.Module | None = None
+        self.ffn_adapter: nn.Module | None = None
+
+    def forward(self, inputs: torch.Tensor, valid_tokens: torch.Tensor) -> torch.Tensor:
+        attention_output = self.attention(inputs, valid_tokens)
+        if self.attention_adapter is not None:
+            attention_output = self.attention_adapter(attention_output)
+        outputs = self.attention_norm(inputs + attention_output)
+        outputs = outputs.masked_fill(~valid_tokens.unsqueeze(-1), 0.0)
+        ffn_output = self.ffn(outputs)
+        if self.ffn_adapter is not None:
+            ffn_output = self.ffn_adapter(ffn_output)
+        outputs = self.ffn_norm(outputs + ffn_output)
+        return outputs.masked_fill(~valid_tokens.unsqueeze(-1), 0.0)

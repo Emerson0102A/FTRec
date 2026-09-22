@@ -175,7 +175,7 @@ def _evaluate_sampled_batched(
                     dtype=torch.long,
                     device=device,
                 )
-                prepared = model.prepare_scoring(contexts)
+                prepared = model.prepare_scoring(contexts, candidate_ids)
                 scores = model.score_prepared(prepared, candidate_ids)
                 target_scores = model.score_prepared(
                     prepared, target_ids.unsqueeze(1)
@@ -226,7 +226,7 @@ def _evaluate_sampled_batched(
                 dtype=torch.long,
                 device=device,
             )
-            prepared = model.prepare_scoring(contexts)
+            prepared = model.prepare_scoring(contexts, candidate_ids)
             scores = model.score_prepared(prepared, candidate_ids)
             target_ids = torch.tensor(
                 [example.positive_item for example in batch],
@@ -278,12 +278,12 @@ def _evaluate_full_batched(
                     dtype=torch.long,
                     device=device,
                 )
-                prepared = model.prepare_scoring(contexts)
                 target_ids = torch.tensor(
                     [example.positive_item for example in batch],
                     dtype=torch.long,
                     device=device,
                 )
+                prepared = model.prepare_scoring(contexts, target_ids.unsqueeze(1))
                 target_scores = model.score_prepared(
                     prepared, target_ids.unsqueeze(1)
                 ).squeeze(1)

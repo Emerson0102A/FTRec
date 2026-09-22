@@ -123,6 +123,7 @@ class PretrainSettings:
     force: bool = False
     progress: bool = True
     resume: bool = False
+    evaluate_test_each_epoch: bool = False
 
     def __post_init__(self) -> None:
         specification = method_spec(self.method)
@@ -187,10 +188,19 @@ def _metrics_by_domain_name(
     return {_domain_name(domain): values for domain, values in metrics.items()}
 
 
+def pretrain_settings_dict(settings: PretrainSettings) -> dict[str, object]:
+    """Serialize settings without changing legacy hashes when monitoring is off."""
+
+    values = asdict(settings)
+    if not settings.evaluate_test_each_epoch:
+        values.pop("evaluate_test_each_epoch")
+    return values
+
+
 def pretrain_config_hash(
     model_config: SASRecConfig, settings: PretrainSettings
 ) -> str:
-    training = asdict(settings)
+    training = pretrain_settings_dict(settings)
     training.pop("output_dir")
     training.pop("force")
     training.pop("progress")
@@ -222,7 +232,10 @@ def _validate_resume_configuration(
     previous = json.loads(resolved_path.read_text(encoding="utf-8"))
     current = json.loads(
         canonical_json(
-            {"model": model_config_dict(model_config), "training": asdict(settings)}
+            {
+                "model": model_config_dict(model_config),
+                "training": pretrain_settings_dict(settings),
+            }
         )
     )
     if previous.get("model") != current["model"]:
@@ -266,11 +279,34 @@ def combine_multitask_gradients(
     *,
     method: str,
     domain_batch_sizes: Sequence[int],
+    task_domains: Sequence[int] | None = None,
+    private_parameter_owners: Mapping[str, int] | None = None,
 ) -> TaskGradients:
-    """Reduce domain-mean gradients under the method's sampling objective."""
+    """Reduce gradients, retaining full owner gradients for private parameters."""
     if method == "joint_proportional":
-        return weighted_gradients(tasks, domain_batch_sizes)
-    return mean_gradients(tasks)
+        combined = weighted_gradients(tasks, domain_batch_sizes)
+    else:
+        combined = mean_gradients(tasks)
+    owners = dict(private_parameter_owners or {})
+    if not owners:
+        return combined
+    if task_domains is None or len(task_domains) != len(tasks):
+        raise ValueError("task_domains must align with tasks when private parameters are used")
+    task_by_domain = dict(zip(task_domains, tasks, strict=True))
+    unknown = set(owners) - set(combined.names)
+    if unknown:
+        raise ValueError(f"private parameter owners contain unknown names: {sorted(unknown)}")
+    values = list(combined.values)
+    for index, name in enumerate(combined.names):
+        owner = owners.get(name)
+        if owner is None:
+            continue
+        if owner not in task_by_domain:
+            raise ValueError(f"private parameter {name!r} has absent owner domain {owner}")
+        owner_task = task_by_domain[owner]
+        owner_value = owner_task.values[index]
+        values[index] = owner_value.clone() if owner_value is not None else None
+    return TaskGradients(combined.names, tuple(values))
 
 
 def combine_domain_losses(
@@ -508,12 +544,19 @@ def run_multitask_step(
             projection_counts=projection_counts,
             groups=groups,
         )
+    task_domains = tuple(sorted(step_batches))
+    private_owner_getter = getattr(model, "private_parameter_owners", None)
+    private_parameter_owners = (
+        private_owner_getter() if callable(private_owner_getter) else {}
+    )
     combined = combine_multitask_gradients(
         gradients_for_step,
         method=method,
         domain_batch_sizes=tuple(
-            len(step_batches[domain]) for domain in sorted(step_batches)
+            len(step_batches[domain]) for domain in task_domains
         ),
+        task_domains=task_domains,
+        private_parameter_owners=private_parameter_owners,
     )
     for name, value in zip(combined.names, combined.values, strict=True):
         parameters_by_name[name].grad = value
@@ -969,7 +1012,7 @@ def train_pretraining(
                 canonical_json(
                     {
                         "model": model_config_dict(model_config),
-                        "training": asdict(settings),
+                        "training": pretrain_settings_dict(settings),
                     }
                 )
             ),
@@ -1102,6 +1145,18 @@ def train_pretraining(
                 sampled_candidates_by_domain=validation_candidates,
             )
             validation_ndcg = _macro_ndcg(final_validation)
+            test_monitor: dict[int, dict[str, float | int | str]] | None = None
+            test_monitor_ndcg: float | None = None
+            if settings.evaluate_test_each_epoch:
+                test_monitor = _evaluate_domains(
+                    model,
+                    test_examples,
+                    store.items_by_domain,
+                    settings,
+                    seed_offset=20_000,
+                    sampled_candidates_by_domain=test_candidates,
+                )
+                test_monitor_ndcg = _macro_ndcg(test_monitor)
             elapsed_seconds = time.perf_counter() - training_started
             completed_epochs = epoch - start_epoch + 1
             eta_seconds = (
@@ -1128,6 +1183,16 @@ def train_pretraining(
                 "validation_by_name": _metrics_by_domain_name(final_validation),
                 "validation_macro_ndcg": validation_ndcg,
             }
+            if test_monitor is not None:
+                epoch_record.update(
+                    {
+                        "test_monitor": test_monitor,
+                        "test_monitor_by_name": _metrics_by_domain_name(
+                            test_monitor
+                        ),
+                        "test_monitor_macro_ndcg": test_monitor_ndcg,
+                    }
+                )
             with metrics_path.open("a", encoding="utf-8", newline="\n") as stream:
                 stream.write(
                     json.dumps(
@@ -1139,16 +1204,19 @@ def train_pretraining(
                     )
                     + "\n"
                 )
+            progress_record = {
+                "elapsed_seconds": round(elapsed_seconds, 1),
+                "epoch": epoch,
+                "eta_seconds": round(eta_seconds, 1),
+                "event": "pretrain_epoch_complete",
+                "method": settings.method,
+                "validation_macro_ndcg": validation_ndcg,
+            }
+            if test_monitor_ndcg is not None:
+                progress_record["test_monitor_macro_ndcg"] = test_monitor_ndcg
             print(
                 json.dumps(
-                    {
-                        "elapsed_seconds": round(elapsed_seconds, 1),
-                        "epoch": epoch,
-                        "eta_seconds": round(eta_seconds, 1),
-                        "event": "pretrain_epoch_complete",
-                        "method": settings.method,
-                        "validation_macro_ndcg": validation_ndcg,
-                    },
+                    progress_record,
                     sort_keys=True,
                     separators=(",", ":"),
                 ),

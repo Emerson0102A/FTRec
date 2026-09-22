@@ -37,6 +37,15 @@ def load_item_domain_ids(
 ) -> tuple[torch.Tensor, int]:
     """Load an item-aligned domain vector, reserving zero for padding."""
 
+    aligned, domain_values = _load_item_domain_index(path, num_items)
+    return aligned, len(domain_values)
+
+
+def _load_item_domain_index(
+    path: str | Path, num_items: int
+) -> tuple[torch.Tensor, tuple[int, ...]]:
+    """Return mapped item domains plus their ordered raw domain identifiers."""
+
     source = Path(path)
     opener = gzip.open if source.suffix == ".gz" else open
     raw_domains = np.full(num_items + 1, -1, dtype=np.int64)
@@ -64,12 +73,12 @@ def load_item_domain_ids(
         raise ValueError(
             f"item domain file is missing {missing.size} items; first: {preview}"
         )
-    domain_values = sorted(int(value) for value in np.unique(raw_domains[1:]))
+    domain_values = tuple(sorted(int(value) for value in np.unique(raw_domains[1:])))
     remapping = {value: index + 1 for index, value in enumerate(domain_values)}
     aligned = np.zeros(num_items + 1, dtype=np.int64)
     for raw, mapped in remapping.items():
         aligned[raw_domains == raw] = mapped
-    return torch.from_numpy(aligned), len(domain_values)
+    return torch.from_numpy(aligned), domain_values
 
 
 class TitleItemEncoder(nn.Module):
@@ -321,3 +330,179 @@ class FusedContentItemEncoder(nn.Module):
         fused = self.output_norm(title + attributes)
         available = self.title_encoder.content_present[ids] & ids.ne(0)
         return fused * available.unsqueeze(-1).to(fused.dtype)
+
+
+class _SharedPrivateProjection(nn.Module):
+    """Shared semantic compression followed by one output map per domain."""
+
+    def __init__(
+        self,
+        input_size: int,
+        projection_size: int,
+        hidden_size: int,
+        num_domains: int,
+        *,
+        shared_norm: bool,
+    ) -> None:
+        super().__init__()
+        layers: list[nn.Module] = [
+            nn.Linear(input_size, projection_size),
+            nn.ReLU(),
+        ]
+        if shared_norm:
+            layers.append(nn.LayerNorm(projection_size))
+        self.shared = nn.Sequential(*layers)
+        self.private = nn.ModuleList(
+            nn.Linear(projection_size, hidden_size) for _ in range(num_domains)
+        )
+
+    def forward(self, values: torch.Tensor, domain_ids: torch.Tensor) -> torch.Tensor:
+        compressed = self.shared(values)
+        output = compressed.new_zeros(*compressed.shape[:-1], self.private[0].out_features)
+        for mapped_domain, projection in enumerate(self.private, start=1):
+            mask = domain_ids.eq(mapped_domain)
+            if torch.any(mask):
+                output[mask] = projection(compressed[mask])
+        return output
+
+
+class SharedPrivateBehaviorItemEncoder(nn.Module):
+    """The complete content-only Behavior item encoder from MyModel4.
+
+    Raw title and attribute embeddings are frozen. Semantic compression is
+    shared, while output projections, attribute attention, and final
+    normalization are private to each item domain.
+    """
+
+    def __init__(
+        self,
+        artifact: AttributeArtifact,
+        *,
+        hidden_size: int,
+        item_domain_file: str,
+        projection_size: int = 0,
+        domain_embedding_scale: float = 0.1,
+        attribute_temperature: float = 1.0,
+    ) -> None:
+        super().__init__()
+        if attribute_temperature <= 0:
+            raise ValueError("attribute_temperature must be positive")
+        if domain_embedding_scale < 0:
+            raise ValueError("domain_embedding_scale must be non-negative")
+        title = torch.from_numpy(np.asarray(artifact.title_embeddings, dtype=np.float16))
+        attributes = torch.from_numpy(np.asarray(artifact.attribute_embeddings, dtype=np.float16))
+        present = torch.from_numpy(np.asarray(artifact.present_mask, dtype=np.bool_))
+        domain_ids, raw_domains = _load_item_domain_index(item_domain_file, artifact.item_count)
+        self.register_buffer("title_bank", title, persistent=False)
+        self.register_buffer("attribute_bank", attributes, persistent=False)
+        self.register_buffer("content_present", present, persistent=False)
+        self.register_buffer("item_domain_ids", domain_ids, persistent=False)
+        self.raw_domains = raw_domains
+        self.num_domains = len(raw_domains)
+        self.hidden_size = hidden_size
+        self.domain_embedding_scale = float(domain_embedding_scale)
+        self.attribute_temperature = float(attribute_temperature)
+        source_size = artifact.embedding_dim
+        bottleneck = (
+            int(projection_size) if projection_size > 0 else max(source_size // 4, hidden_size)
+        )
+        self.title_projection = _SharedPrivateProjection(
+            source_size,
+            bottleneck,
+            hidden_size,
+            self.num_domains,
+            shared_norm=False,
+        )
+        self.attribute_projection = _SharedPrivateProjection(
+            source_size,
+            bottleneck,
+            hidden_size,
+            self.num_domains,
+            shared_norm=True,
+        )
+        self.norms = nn.ModuleList(nn.LayerNorm(hidden_size) for _ in range(self.num_domains))
+        self.domain_embedding = nn.Embedding(self.num_domains + 1, hidden_size, padding_idx=0)
+        self.attribute_queries = nn.ParameterList(
+            nn.Parameter(torch.zeros(hidden_size)) for _ in range(self.num_domains)
+        )
+        self.attribute_title_queries = nn.ModuleList(
+            nn.Linear(hidden_size, hidden_size, bias=False) for _ in range(self.num_domains)
+        )
+
+    def reset_attribute_conditioning(self) -> None:
+        """Begin from uniform pooling while preserving trainable attention."""
+
+        with torch.no_grad():
+            for query in self.attribute_queries:
+                query.zero_()
+            for projection in self.attribute_title_queries:
+                projection.weight.zero_()
+
+    def get_domain_ids(self, item_ids: torch.Tensor) -> torch.Tensor:
+        return self.item_domain_ids[item_ids.long()]
+
+    def raw_domain_for_mapped(self, mapped_domain: int) -> int:
+        if not 1 <= mapped_domain <= self.num_domains:
+            raise ValueError(f"mapped domain must be in 1..{self.num_domains}")
+        return self.raw_domains[mapped_domain - 1]
+
+    def components(self, item_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        ids = item_ids.long()
+        dtype = self.title_projection.shared[0].weight.dtype
+        raw_title = self.title_bank[ids].to(dtype)
+        raw_attributes = self.attribute_bank[ids].to(dtype)
+        attribute_valid = raw_attributes.abs().sum(dim=-1).gt(0)
+        domains = self.get_domain_ids(ids)
+        title = self.title_projection(F.normalize(raw_title, p=2, dim=-1), domains)
+        attribute_domains = domains.unsqueeze(-1).expand_as(attribute_valid)
+        attributes = self.attribute_projection(
+            F.normalize(raw_attributes, p=2, dim=-1), attribute_domains
+        )
+        attributes = attributes * attribute_valid.unsqueeze(-1).to(attributes.dtype)
+        return title, attributes, attribute_valid
+
+    def pool_attributes(
+        self,
+        title: torch.Tensor,
+        attributes: torch.Tensor,
+        valid: torch.Tensor,
+        domains: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        query = torch.zeros_like(title)
+        for mapped_domain in range(1, self.num_domains + 1):
+            mask = domains.eq(mapped_domain)
+            if torch.any(mask):
+                query[mask] = self.attribute_queries[
+                    mapped_domain - 1
+                ] + self.attribute_title_queries[mapped_domain - 1](title[mask])
+        logits = torch.einsum("...ah,...h->...a", attributes, query)
+        logits = logits / (self.hidden_size**0.5 * self.attribute_temperature)
+        weights = FusedContentItemEncoder._masked_weights(logits, valid)
+        pooled = torch.einsum("...a,...ah->...h", weights, attributes)
+        return pooled, weights
+
+    def forward(self, item_ids: torch.Tensor) -> torch.Tensor:
+        ids = item_ids.long()
+        domains = self.get_domain_ids(ids)
+        title, attributes, valid = self.components(ids)
+        pooled, _ = self.pool_attributes(title, attributes, valid, domains)
+        values = title + pooled + self.domain_embedding_scale * self.domain_embedding(domains)
+        result = torch.zeros_like(values)
+        for mapped_domain, norm in enumerate(self.norms, start=1):
+            mask = domains.eq(mapped_domain)
+            if torch.any(mask):
+                result[mask] = norm(values[mask])
+        available = self.content_present[ids] & ids.ne(0)
+        return result * available.unsqueeze(-1).to(result.dtype)
+
+    def private_parameters(self, mapped_domain: int) -> tuple[nn.Parameter, ...]:
+        index = mapped_domain - 1
+        modules: tuple[nn.Module, ...] = (
+            self.title_projection.private[index],
+            self.attribute_projection.private[index],
+            self.norms[index],
+            self.attribute_title_queries[index],
+        )
+        parameters = [parameter for module in modules for parameter in module.parameters()]
+        parameters.append(self.attribute_queries[index])
+        return tuple(parameters)

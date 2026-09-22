@@ -40,8 +40,9 @@ class DualTowerScoringView(nn.Module):
             self.model.attribute_tower.prepare_evaluation_cache(chunk_size=chunk_size)
 
     def prepare_scoring(
-        self, contexts: torch.Tensor
+        self, contexts: torch.Tensor, candidate_ids: torch.Tensor | None = None
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        del candidate_ids
         assert self.model.title_tower is not None
         assert self.model.attribute_tower is not None
         if self.component == "title":

@@ -129,13 +129,130 @@ def test_fused_mode_builds_one_item_embedding_before_one_sasrec(tmp_path):
     assert torch.allclose(model.score(contexts, candidates), components[0])
 
 
+def test_mymodel4_behavior_routes_mixed_history_by_target_domain(tmp_path):
+    _artifact(tmp_path)
+    model = SASRec(
+        SASRecConfig(
+            num_items=4,
+            hidden_size=4,
+            num_blocks=2,
+            shared_behavior_blocks=1,
+            num_heads=1,
+            dropout=0,
+            maxlen=3,
+            item_embedding_mode="mymodel4_behavior",
+            attribute_artifact=str(tmp_path),
+            item_domain_file=str(_domain_file(tmp_path)),
+        )
+    )
+    assert model.item_embedding is None
+    assert model.shared_private_tower is not None
+    contexts = torch.tensor([[0, 1, 3]])
+
+    first_domain = model.score(contexts, torch.tensor([[1, 2]]))
+    second_domain = model.score(contexts, torch.tensor([[3, 4]]))
+
+    assert first_domain.shape == second_domain.shape == (1, 2)
+    assert torch.isfinite(first_domain).all()
+    assert torch.isfinite(second_domain).all()
+    with pytest.raises(ValueError, match="one target domain"):
+        model.score(contexts, torch.tensor([[1, 3]]))
+
+
+def test_mymodel4_behavior_uses_complete_shared_private_backbone(tmp_path):
+    _artifact(tmp_path)
+    model = SASRec(
+        SASRecConfig(
+            num_items=4,
+            hidden_size=4,
+            num_blocks=2,
+            shared_behavior_blocks=1,
+            num_heads=1,
+            dropout=0,
+            maxlen=3,
+            item_embedding_mode="mymodel4_behavior",
+            attribute_artifact=str(tmp_path),
+            item_domain_file=str(_domain_file(tmp_path)),
+        )
+    )
+    tower = model.shared_private_tower
+    assert tower is not None
+    assert len(tower.shared_blocks) == 1
+    assert tuple(len(blocks) for blocks in tower.private_blocks) == (1, 1)
+    encoder = tower.item_encoder
+    ids = torch.tensor([1, 3])
+    title, attributes, valid = encoder.components(ids)
+    _, weights = encoder.pool_attributes(title, attributes, valid, encoder.get_domain_ids(ids))
+    assert torch.allclose(weights, torch.full_like(weights, 1 / 3))
+    owners = model.private_parameter_owners()
+    assert set(owners.values()) == {10, 20}
+    assert any("private_blocks.0" in name for name in owners)
+    assert any("private_blocks.1" in name for name in owners)
+
+    model.zero_grad(set_to_none=True)
+    model.score(torch.tensor([[0, 1, 3]]), torch.tensor([[1, 2]])).sum().backward()
+    assert any(parameter.grad is not None for parameter in tower.private_blocks[0].parameters())
+    assert all(parameter.grad is None for parameter in tower.private_blocks[1].parameters())
+
+
+def test_mymodel4_behavior_runs_a_balanced_multidomain_update(tmp_path):
+    from ftrec.training.engine import OptimizerSettings, build_optimizers
+    from ftrec.training.pretrain import run_multitask_step
+
+    _artifact(tmp_path)
+    model = SASRec(
+        SASRecConfig(
+            num_items=4,
+            hidden_size=4,
+            num_blocks=2,
+            shared_behavior_blocks=1,
+            num_heads=1,
+            dropout=0,
+            maxlen=3,
+            item_embedding_mode="mymodel4_behavior",
+            attribute_artifact=str(tmp_path),
+            item_domain_file=str(_domain_file(tmp_path)),
+        )
+    )
+    examples = {
+        10: (
+            TargetExample(0, 1, (0, 1, 3), (-1, 10, 20), 2, 10, frozenset({2})),
+        ),
+        20: (
+            TargetExample(0, 2, (0, 3, 1), (-1, 20, 10), 4, 20, frozenset({4})),
+        ),
+    }
+    before = {
+        name: parameter.detach().clone()
+        for name, parameter in model.named_parameters()
+        if "shared_blocks" in name
+    }
+
+    result = run_multitask_step(
+        model,
+        examples,
+        {10: (1, 2), 20: (3, 4)},
+        {10: (0,), 20: (0,)},
+        build_optimizers(model, OptimizerSettings(lr=1e-3)),
+        method="joint_domain",
+        seed=42,
+        global_step=0,
+        grad_clip_norm=5.0,
+    )
+
+    assert set(result.domain_losses) == {10, 20}
+    assert any(
+        not torch.equal(before[name], parameter)
+        for name, parameter in model.named_parameters()
+        if name in before
+    )
+
+
 @pytest.mark.parametrize(
     "pooling",
     ("mean_all", "soft_attention", "domain_title_attention"),
 )
-def test_soft_pooling_uses_all_valid_attributes_and_masks_missing(
-    tmp_path, pooling
-):
+def test_soft_pooling_uses_all_valid_attributes_and_masks_missing(tmp_path, pooling):
     model = _model(tmp_path, "content_fused", attribute_pooling=pooling)
     assert model.fused_tower is not None
     encoder = model.fused_tower.item_encoder

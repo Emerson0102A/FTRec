@@ -199,3 +199,22 @@ def test_llm2attr_pooling_ablation_configs_are_explicit() -> None:
         root / "sasrec_llm2attr_fused_domain_title_attention.yaml"
     )
     assert domain_config["item_domain_file"].endswith("items.csv.gz")
+
+
+def test_mymodel4_context_ablation_is_matched_and_monitors_test() -> None:
+    from ftrec.config import load_config
+
+    root = Path(__file__).parents[1]
+    experiment = load_config(root / "configs" / "experiment" / "mymodel4_context_ablation.yaml")
+    model = load_config(root / "configs" / "model" / "sasrec_llm2attr_mymodel4_behavior.yaml")
+    script = (root / "scripts" / "run_mymodel4_context_ablation.sh").read_text(encoding="utf-8")
+
+    assert experiment["patience"] == 5
+    assert experiment["evaluate_test_each_epoch"] is True
+    assert experiment["num_eval_negatives"] == 999
+    assert model["item_embedding_mode"] == "mymodel4_behavior"
+    assert "attribute_pooling" not in model
+    assert model["shared_behavior_blocks"] == 1
+    assert model["num_blocks"] == 2
+    assert "single-domain|joint_domain" in script
+    assert "mixed-domain|joint_mixed_matched" in script

@@ -1,0 +1,12 @@
+hidden_size: 64
+num_blocks: 2
+shared_behavior_blocks: 1
+num_heads: 1
+dropout: 0.2
+maxlen: 50
+item_embedding_mode: mymodel4_behavior
+attribute_artifact: data/attribute_experiment/llm2attr
+item_domain_file: data/processed/gmflowrec-amazon/items.csv.gz
+content_projection_size: 0
+domain_embedding_scale: 0.1
+attribute_temperature: 1.0

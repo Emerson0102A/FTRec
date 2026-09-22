@@ -34,8 +34,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--domain", type=int)
     parser.add_argument("--seed", type=int)
     parser.add_argument("--epochs", type=int)
+    parser.add_argument("--patience", type=int)
     parser.add_argument("--steps-per-epoch", type=int)
     parser.add_argument("--device")
+    parser.add_argument(
+        "--test-each-epoch",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="record test monitoring metrics after every validation pass",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--no-progress", action="store_true")
     parser.add_argument("--force", action="store_true")
@@ -108,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
             _pick(args.steps_per_epoch, config, "steps_per_epoch")
         ),
         epochs=int(_pick(args.epochs, config, "epochs")),
-        patience=int(config["patience"]),
+        patience=int(_pick(args.patience, config, "patience")),
         lr=float(config["lr"]),
         embedding_lr=(
             float(config["embedding_lr"])
@@ -140,6 +147,11 @@ def main(argv: list[str] | None = None) -> int:
         force=args.force,
         progress=bool(config.get("progress", True)) and not args.no_progress,
         resume=args.resume,
+        evaluate_test_each_epoch=(
+            bool(args.test_each_epoch)
+            if args.test_each_epoch is not None
+            else bool(config.get("evaluate_test_each_epoch", False))
+        ),
     )
     specification = method_spec(method)
     domains = (
