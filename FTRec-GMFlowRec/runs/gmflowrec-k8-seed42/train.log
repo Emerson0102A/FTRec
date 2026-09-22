@@ -1,0 +1,297 @@
+epoch=1 step=100/1920 loss=11.657896 recommendation_loss=10.593120 prior_loss=10.580360 gmm_loss=67.394684
+epoch=1 step=200/1920 loss=11.478984 recommendation_loss=10.424497 prior_loss=10.502666 gmm_loss=42.205685
+epoch=1 step=300/1920 loss=11.286472 recommendation_loss=10.233887 prior_loss=10.487222 gmm_loss=38.627302
+epoch=1 step=400/1920 loss=11.140893 recommendation_loss=10.090406 prior_loss=10.477411 gmm_loss=27.459728
+epoch=1 step=500/1920 loss=11.026700 recommendation_loss=9.979680 prior_loss=10.450510 gmm_loss=19.686030
+epoch=1 step=600/1920 loss=10.937865 recommendation_loss=9.893602 prior_loss=10.428622 gmm_loss=14.005402
+epoch=1 step=700/1920 loss=10.849524 recommendation_loss=9.807161 prior_loss=10.414035 gmm_loss=9.594345
+epoch=1 step=800/1920 loss=10.760104 recommendation_loss=9.719138 prior_loss=10.403642 gmm_loss=6.026937
+epoch=1 step=900/1920 loss=10.677176 recommendation_loss=9.637147 prior_loss=10.397238 gmm_loss=3.046522
+epoch=1 step=1000/1920 loss=10.607368 recommendation_loss=9.568193 prior_loss=10.391219 gmm_loss=0.534682
+epoch=1 step=1100/1920 loss=10.543738 recommendation_loss=9.505371 prior_loss=10.385370 gmm_loss=-1.695928
+epoch=1 step=1200/1920 loss=10.485659 recommendation_loss=9.448089 prior_loss=10.379343 gmm_loss=-3.646409
+epoch=1 step=1300/1920 loss=10.428685 recommendation_loss=9.391836 prior_loss=10.373876 gmm_loss=-5.381536
+epoch=1 step=1400/1920 loss=10.367063 recommendation_loss=9.331118 prior_loss=10.366421 gmm_loss=-6.977677
+epoch=1 step=1500/1920 loss=10.308066 recommendation_loss=9.273001 prior_loss=10.358839 gmm_loss=-8.192082
+epoch=1 step=1600/1920 loss=10.249530 recommendation_loss=9.215257 prior_loss=10.351352 gmm_loss=-8.617959
+epoch=1 step=1700/1920 loss=10.192026 recommendation_loss=9.158414 prior_loss=10.344210 gmm_loss=-8.088987
+epoch=1 step=1800/1920 loss=10.137510 recommendation_loss=9.104342 prior_loss=10.337393 gmm_loss=-5.714174
+epoch=1 step=1900/1920 loss=10.085390 recommendation_loss=9.052170 prior_loss=10.333383 gmm_loss=-1.188708
+epoch=1 step=1920/1920 loss=10.075834 recommendation_loss=9.042575 prior_loss=10.332804 gmm_loss=-0.216271
+validation epoch=1 NDCG@10=0.019167 HR@10=0.040232
+epoch=2 step=100/1920 loss=8.683887 recommendation_loss=7.664979 prior_loss=10.165128 gmm_loss=23.946829
+epoch=2 step=200/1920 loss=8.673581 recommendation_loss=7.658781 prior_loss=10.140004 gmm_loss=7.998987
+epoch=2 step=300/1920 loss=8.655070 recommendation_loss=7.642839 prior_loss=10.122078 gmm_loss=0.234760
+epoch=2 step=400/1920 loss=8.630594 recommendation_loss=7.620692 prior_loss=10.103749 gmm_loss=-4.724947
+epoch=2 step=500/1920 loss=8.610243 recommendation_loss=7.602253 prior_loss=10.088110 gmm_loss=-8.201052
+epoch=2 step=600/1920 loss=8.584242 recommendation_loss=7.577910 prior_loss=10.074155 gmm_loss=-10.832735
+epoch=2 step=700/1920 loss=8.557644 recommendation_loss=7.552883 prior_loss=10.060557 gmm_loss=-12.944286
+epoch=2 step=800/1920 loss=8.529943 recommendation_loss=7.526357 prior_loss=10.050390 gmm_loss=-14.530135
+epoch=2 step=900/1920 loss=8.500771 recommendation_loss=7.498124 prior_loss=10.042327 gmm_loss=-15.859432
+epoch=2 step=1000/1920 loss=8.474079 recommendation_loss=7.472201 prior_loss=10.035716 gmm_loss=-16.936036
+epoch=2 step=1100/1920 loss=8.448449 recommendation_loss=7.447239 prior_loss=10.029910 gmm_loss=-17.809612
+epoch=2 step=1200/1920 loss=8.419604 recommendation_loss=7.418954 prior_loss=10.025121 gmm_loss=-18.627720
+epoch=2 step=1300/1920 loss=8.389601 recommendation_loss=7.389521 prior_loss=10.020170 gmm_loss=-19.369364
+epoch=2 step=1400/1920 loss=8.353855 recommendation_loss=7.354403 prior_loss=10.014486 gmm_loss=-19.964437
+epoch=2 step=1500/1920 loss=8.320641 recommendation_loss=7.321671 prior_loss=10.010392 gmm_loss=-20.690344
+epoch=2 step=1600/1920 loss=8.284515 recommendation_loss=7.285973 prior_loss=10.006781 gmm_loss=-21.359893
+epoch=2 step=1700/1920 loss=8.249155 recommendation_loss=7.250965 prior_loss=10.003830 gmm_loss=-21.929068
+epoch=2 step=1800/1920 loss=8.214248 recommendation_loss=7.216413 prior_loss=10.000816 gmm_loss=-22.469087
+epoch=2 step=1900/1920 loss=8.181724 recommendation_loss=7.184106 prior_loss=9.999111 gmm_loss=-22.931192
+epoch=2 step=1920/1920 loss=8.175089 recommendation_loss=7.177495 prior_loss=9.998951 gmm_loss=-23.005302
+validation epoch=2 NDCG@10=0.039054 HR@10=0.080756
+epoch=3 step=100/1920 loss=7.053652 recommendation_loss=6.062750 prior_loss=9.938959 gmm_loss=-29.935826
+epoch=3 step=200/1920 loss=7.052749 recommendation_loss=6.062539 prior_loss=9.930870 gmm_loss=-28.767705
+epoch=3 step=300/1920 loss=7.040628 recommendation_loss=6.051346 prior_loss=9.921459 gmm_loss=-28.642141
+epoch=3 step=400/1920 loss=7.022951 recommendation_loss=6.034555 prior_loss=9.912379 gmm_loss=-28.416896
+epoch=3 step=500/1920 loss=7.013159 recommendation_loss=6.025236 prior_loss=9.907206 gmm_loss=-27.970588
+epoch=3 step=600/1920 loss=6.998308 recommendation_loss=6.010677 prior_loss=9.904146 gmm_loss=-27.839707
+epoch=3 step=700/1920 loss=6.980881 recommendation_loss=5.993695 prior_loss=9.899383 gmm_loss=-27.523422
+epoch=3 step=800/1920 loss=6.969027 recommendation_loss=5.981877 prior_loss=9.898568 gmm_loss=-27.069415
+epoch=3 step=900/1920 loss=6.946055 recommendation_loss=5.959295 prior_loss=9.894423 gmm_loss=-26.830545
+epoch=3 step=1000/1920 loss=6.927998 recommendation_loss=5.941333 prior_loss=9.893155 gmm_loss=-26.510253
+epoch=3 step=1100/1920 loss=6.906546 recommendation_loss=5.920109 prior_loss=9.890405 gmm_loss=-26.037097
+epoch=3 step=1200/1920 loss=6.884279 recommendation_loss=5.897888 prior_loss=9.889528 gmm_loss=-25.621965
+epoch=3 step=1300/1920 loss=6.862969 recommendation_loss=5.876635 prior_loss=9.888057 gmm_loss=-24.719016
+epoch=3 step=1400/1920 loss=6.838517 recommendation_loss=5.852223 prior_loss=9.886804 gmm_loss=-23.861171
+epoch=3 step=1500/1920 loss=6.815356 recommendation_loss=5.828986 prior_loss=9.886746 gmm_loss=-23.046220
+epoch=3 step=1600/1920 loss=6.786711 recommendation_loss=5.800327 prior_loss=9.886239 gmm_loss=-22.395860
+epoch=3 step=1700/1920 loss=6.760299 recommendation_loss=5.773792 prior_loss=9.886435 gmm_loss=-21.366869
+epoch=3 step=1800/1920 loss=6.729045 recommendation_loss=5.742517 prior_loss=9.885737 gmm_loss=-20.451146
+epoch=3 step=1900/1920 loss=6.697025 recommendation_loss=5.710452 prior_loss=9.885187 gmm_loss=-19.461034
+epoch=3 step=1920/1920 loss=6.690183 recommendation_loss=5.703590 prior_loss=9.885232 gmm_loss=-19.301373
+validation epoch=3 NDCG@10=0.033741 HR@10=0.070473
+epoch=4 step=100/1920 loss=5.497647 recommendation_loss=4.511440 prior_loss=9.868206 gmm_loss=-6.130410
+epoch=4 step=200/1920 loss=5.506238 recommendation_loss=4.520071 prior_loss=9.867853 gmm_loss=-6.184616
+epoch=4 step=300/1920 loss=5.497581 recommendation_loss=4.511158 prior_loss=9.867641 gmm_loss=-3.405590
+epoch=4 step=400/1920 loss=5.480601 recommendation_loss=4.493874 prior_loss=9.869198 gmm_loss=-1.923197
+epoch=4 step=500/1920 loss=5.456592 recommendation_loss=4.469910 prior_loss=9.867828 gmm_loss=-1.011251
+epoch=4 step=600/1920 loss=5.426276 recommendation_loss=4.439615 prior_loss=9.866438 gmm_loss=0.168392
+epoch=4 step=700/1920 loss=5.396696 recommendation_loss=4.410042 prior_loss=9.864059 gmm_loss=2.479174
+epoch=4 step=800/1920 loss=5.361926 recommendation_loss=4.375126 prior_loss=9.862568 gmm_loss=5.429275
+epoch=4 step=900/1920 loss=5.324648 recommendation_loss=4.337712 prior_loss=9.860670 gmm_loss=8.691664
+epoch=4 step=1000/1920 loss=5.287726 recommendation_loss=4.300678 prior_loss=9.859466 gmm_loss=11.011158
+epoch=4 step=1100/1920 loss=5.252373 recommendation_loss=4.265444 prior_loss=9.858774 gmm_loss=10.514935
+epoch=4 step=1200/1920 loss=5.216203 recommendation_loss=4.229407 prior_loss=9.858691 gmm_loss=9.269492
+epoch=4 step=1300/1920 loss=5.181947 recommendation_loss=4.195236 prior_loss=9.859155 gmm_loss=7.958854
+epoch=4 step=1400/1920 loss=5.145864 recommendation_loss=4.159236 prior_loss=9.859852 gmm_loss=6.426924
+epoch=4 step=1500/1920 loss=5.108479 recommendation_loss=4.121951 prior_loss=9.860449 gmm_loss=4.837091
+epoch=4 step=1600/1920 loss=5.071851 recommendation_loss=4.085324 prior_loss=9.861942 gmm_loss=3.325881
+epoch=4 step=1700/1920 loss=5.034020 recommendation_loss=4.047517 prior_loss=9.863120 gmm_loss=1.908018
+epoch=4 step=1800/1920 loss=4.994814 recommendation_loss=4.008381 prior_loss=9.863631 gmm_loss=0.696523
+epoch=4 step=1900/1920 loss=4.957291 recommendation_loss=3.970829 prior_loss=9.865099 gmm_loss=-0.479657
+epoch=4 step=1920/1920 loss=4.949862 recommendation_loss=3.963408 prior_loss=9.865248 gmm_loss=-0.713586
+validation epoch=4 NDCG@10=0.031855 HR@10=0.067615
+epoch=5 step=100/1920 loss=3.608670 recommendation_loss=2.624020 prior_loss=9.869021 gmm_loss=-22.516064
+epoch=5 step=200/1920 loss=3.602945 recommendation_loss=2.618762 prior_loss=9.865951 gmm_loss=-24.116982
+epoch=5 step=300/1920 loss=3.605366 recommendation_loss=2.621251 prior_loss=9.864742 gmm_loss=-23.586576
+epoch=5 step=400/1920 loss=3.596523 recommendation_loss=2.612609 prior_loss=9.861669 gmm_loss=-22.526527
+epoch=5 step=500/1920 loss=3.582356 recommendation_loss=2.598857 prior_loss=9.858537 gmm_loss=-23.546388
+epoch=5 step=600/1920 loss=3.561240 recommendation_loss=2.577960 prior_loss=9.856859 gmm_loss=-24.055156
+epoch=5 step=700/1920 loss=3.546879 recommendation_loss=2.563494 prior_loss=9.858172 gmm_loss=-24.318809
+epoch=5 step=800/1920 loss=3.531053 recommendation_loss=2.547518 prior_loss=9.860336 gmm_loss=-24.987060
+epoch=5 step=900/1920 loss=3.510487 recommendation_loss=2.527096 prior_loss=9.859305 gmm_loss=-25.404731
+epoch=5 step=1000/1920 loss=3.491402 recommendation_loss=2.508112 prior_loss=9.858794 gmm_loss=-25.895558
+epoch=5 step=1100/1920 loss=3.468422 recommendation_loss=2.485269 prior_loss=9.857605 gmm_loss=-26.069307
+epoch=5 step=1200/1920 loss=3.446945 recommendation_loss=2.463926 prior_loss=9.856767 gmm_loss=-26.582304
+epoch=5 step=1300/1920 loss=3.427621 recommendation_loss=2.444679 prior_loss=9.856480 gmm_loss=-27.061590
+epoch=5 step=1400/1920 loss=3.408631 recommendation_loss=2.425679 prior_loss=9.856931 gmm_loss=-27.410326
+epoch=5 step=1500/1920 loss=3.387154 recommendation_loss=2.404287 prior_loss=9.856153 gmm_loss=-27.480224
+epoch=5 step=1600/1920 loss=3.367815 recommendation_loss=2.384940 prior_loss=9.856361 gmm_loss=-27.608699
+epoch=5 step=1700/1920 loss=3.348610 recommendation_loss=2.365829 prior_loss=9.855721 gmm_loss=-27.914708
+epoch=5 step=1800/1920 loss=3.331068 recommendation_loss=2.348291 prior_loss=9.855856 gmm_loss=-28.082538
+epoch=5 step=1900/1920 loss=3.311496 recommendation_loss=2.328787 prior_loss=9.855480 gmm_loss=-28.389926
+epoch=5 step=1920/1920 loss=3.307235 recommendation_loss=2.324527 prior_loss=9.855522 gmm_loss=-28.437849
+validation epoch=5 NDCG@10=0.013317 HR@10=0.028711
+epoch=6 step=100/1920 loss=2.430345 recommendation_loss=1.447974 prior_loss=9.847529 gmm_loss=-23.819121
+epoch=6 step=200/1920 loss=2.462715 recommendation_loss=1.480415 prior_loss=9.851104 gmm_loss=-28.101212
+epoch=6 step=300/1920 loss=2.466124 recommendation_loss=1.484011 prior_loss=9.851330 gmm_loss=-30.202475
+epoch=6 step=400/1920 loss=2.470151 recommendation_loss=1.488634 prior_loss=9.846426 gmm_loss=-31.260577
+epoch=6 step=500/1920 loss=2.468314 recommendation_loss=1.487212 prior_loss=9.843477 gmm_loss=-32.455181
+epoch=6 step=600/1920 loss=2.464339 recommendation_loss=1.483374 prior_loss=9.841693 gmm_loss=-32.034490
+epoch=6 step=700/1920 loss=2.455601 recommendation_loss=1.475033 prior_loss=9.838228 gmm_loss=-32.547940
+epoch=6 step=800/1920 loss=2.448835 recommendation_loss=1.468207 prior_loss=9.839341 gmm_loss=-33.061281
+epoch=6 step=900/1920 loss=2.438869 recommendation_loss=1.458296 prior_loss=9.839150 gmm_loss=-33.417060
+epoch=6 step=1000/1920 loss=2.431550 recommendation_loss=1.451112 prior_loss=9.838025 gmm_loss=-33.651527
+epoch=6 step=1100/1920 loss=2.426412 recommendation_loss=1.446094 prior_loss=9.837147 gmm_loss=-33.964320
+epoch=6 step=1200/1920 loss=2.418470 recommendation_loss=1.438277 prior_loss=9.835984 gmm_loss=-34.061447
+epoch=6 step=1300/1920 loss=2.411610 recommendation_loss=1.431400 prior_loss=9.835620 gmm_loss=-33.521217
+epoch=6 step=1400/1920 loss=2.405384 recommendation_loss=1.425179 prior_loss=9.835856 gmm_loss=-33.796309
+epoch=6 step=1500/1920 loss=2.398490 recommendation_loss=1.418191 prior_loss=9.836649 gmm_loss=-33.657282
+epoch=6 step=1600/1920 loss=2.390465 recommendation_loss=1.410155 prior_loss=9.836970 gmm_loss=-33.869320
+epoch=6 step=1700/1920 loss=2.382850 recommendation_loss=1.402573 prior_loss=9.836649 gmm_loss=-33.878270
+epoch=6 step=1800/1920 loss=2.375845 recommendation_loss=1.395536 prior_loss=9.836356 gmm_loss=-33.269572
+epoch=6 step=1900/1920 loss=2.366512 recommendation_loss=1.386254 prior_loss=9.835854 gmm_loss=-33.279683
+epoch=6 step=1920/1920 loss=2.364795 recommendation_loss=1.384533 prior_loss=9.835779 gmm_loss=-33.162057
+validation epoch=6 NDCG@10=0.007321 HR@10=0.015211
+epoch=7 step=100/1920 loss=1.836390 recommendation_loss=0.858332 prior_loss=9.817511 gmm_loss=-36.932828
+epoch=7 step=200/1920 loss=1.844304 recommendation_loss=0.865869 prior_loss=9.822115 gmm_loss=-37.770199
+epoch=7 step=300/1920 loss=1.849474 recommendation_loss=0.870575 prior_loss=9.821890 gmm_loss=-32.904415
+epoch=7 step=400/1920 loss=1.856521 recommendation_loss=0.877524 prior_loss=9.824052 gmm_loss=-34.082938
+epoch=7 step=500/1920 loss=1.858635 recommendation_loss=0.880062 prior_loss=9.820130 gmm_loss=-34.399435
+epoch=7 step=600/1920 loss=1.861716 recommendation_loss=0.882928 prior_loss=9.819197 gmm_loss=-31.312351
+epoch=7 step=700/1920 loss=1.863289 recommendation_loss=0.884453 prior_loss=9.819214 gmm_loss=-30.857189
+epoch=7 step=800/1920 loss=1.862084 recommendation_loss=0.883318 prior_loss=9.818576 gmm_loss=-30.912285
+epoch=7 step=900/1920 loss=1.863786 recommendation_loss=0.885071 prior_loss=9.818567 gmm_loss=-31.420188
+epoch=7 step=1000/1920 loss=1.863963 recommendation_loss=0.885204 prior_loss=9.819925 gmm_loss=-32.331673
+epoch=7 step=1100/1920 loss=1.863820 recommendation_loss=0.885138 prior_loss=9.819207 gmm_loss=-32.380148
+epoch=7 step=1200/1920 loss=1.861292 recommendation_loss=0.882854 prior_loss=9.817483 gmm_loss=-33.100612
+epoch=7 step=1300/1920 loss=1.858661 recommendation_loss=0.880257 prior_loss=9.817141 gmm_loss=-33.098835
+epoch=7 step=1400/1920 loss=1.857389 recommendation_loss=0.879005 prior_loss=9.816913 gmm_loss=-33.070869
+epoch=7 step=1500/1920 loss=1.854168 recommendation_loss=0.875770 prior_loss=9.817225 gmm_loss=-33.239613
+epoch=7 step=1600/1920 loss=1.851798 recommendation_loss=0.873361 prior_loss=9.817735 gmm_loss=-33.367803
+epoch=7 step=1700/1920 loss=1.848459 recommendation_loss=0.870106 prior_loss=9.817177 gmm_loss=-33.645407
+epoch=7 step=1800/1920 loss=1.845140 recommendation_loss=0.866826 prior_loss=9.817237 gmm_loss=-34.090567
+epoch=7 step=1900/1920 loss=1.840527 recommendation_loss=0.862252 prior_loss=9.816720 gmm_loss=-33.965138
+epoch=7 step=1920/1920 loss=1.839822 recommendation_loss=0.861537 prior_loss=9.816558 gmm_loss=-33.703523
+validation epoch=7 NDCG@10=0.002991 HR@10=0.006750
+epoch=8 step=100/1920 loss=1.536464 recommendation_loss=0.559708 prior_loss=9.800150 gmm_loss=-32.588642
+epoch=8 step=200/1920 loss=1.544306 recommendation_loss=0.568166 prior_loss=9.793845 gmm_loss=-32.451579
+epoch=8 step=300/1920 loss=1.545929 recommendation_loss=0.569225 prior_loss=9.796357 gmm_loss=-29.315858
+epoch=8 step=400/1920 loss=1.550798 recommendation_loss=0.573974 prior_loss=9.798326 gmm_loss=-30.081980
+epoch=8 step=500/1920 loss=1.551658 recommendation_loss=0.574760 prior_loss=9.800043 gmm_loss=-31.069724
+epoch=8 step=600/1920 loss=1.552327 recommendation_loss=0.575399 prior_loss=9.799580 gmm_loss=-30.303812
+epoch=8 step=700/1920 loss=1.554215 recommendation_loss=0.576987 prior_loss=9.801182 gmm_loss=-28.899376
+epoch=8 step=800/1920 loss=1.555437 recommendation_loss=0.578387 prior_loss=9.800025 gmm_loss=-29.523343
+epoch=8 step=900/1920 loss=1.555726 recommendation_loss=0.578711 prior_loss=9.800840 gmm_loss=-30.687887
+epoch=8 step=1000/1920 loss=1.556067 recommendation_loss=0.579047 prior_loss=9.801323 gmm_loss=-31.118485
+epoch=8 step=1100/1920 loss=1.556740 recommendation_loss=0.579855 prior_loss=9.800625 gmm_loss=-31.768026
+epoch=8 step=1200/1920 loss=1.556747 recommendation_loss=0.579855 prior_loss=9.800638 gmm_loss=-31.717774
+epoch=8 step=1300/1920 loss=1.555989 recommendation_loss=0.578963 prior_loss=9.800784 gmm_loss=-30.527065
+epoch=8 step=1400/1920 loss=1.555709 recommendation_loss=0.578563 prior_loss=9.801498 gmm_loss=-30.039421
+epoch=8 step=1500/1920 loss=1.555192 recommendation_loss=0.578051 prior_loss=9.801801 gmm_loss=-30.387089
+epoch=8 step=1600/1920 loss=1.553737 recommendation_loss=0.576523 prior_loss=9.801341 gmm_loss=-29.197983
+epoch=8 step=1700/1920 loss=1.553367 recommendation_loss=0.576137 prior_loss=9.801823 gmm_loss=-29.527990
+epoch=8 step=1800/1920 loss=1.551998 recommendation_loss=0.574893 prior_loss=9.801174 gmm_loss=-30.118907
+epoch=8 step=1900/1920 loss=1.551325 recommendation_loss=0.573926 prior_loss=9.801136 gmm_loss=-27.150984
+epoch=8 step=1920/1920 loss=1.551463 recommendation_loss=0.574075 prior_loss=9.801047 gmm_loss=-27.172685
+validation epoch=8 NDCG@10=0.006566 HR@10=0.014558
+epoch=9 step=100/1920 loss=1.369577 recommendation_loss=0.394190 prior_loss=9.771187 gmm_loss=-17.318637
+epoch=9 step=200/1920 loss=1.375608 recommendation_loss=0.399886 prior_loss=9.777899 gmm_loss=-20.673901
+epoch=9 step=300/1920 loss=1.365887 recommendation_loss=0.390572 prior_loss=9.776481 gmm_loss=-23.332311
+epoch=9 step=400/1920 loss=1.367886 recommendation_loss=0.392408 prior_loss=9.778528 gmm_loss=-23.748325
+epoch=9 step=500/1920 loss=1.371969 recommendation_loss=0.396004 prior_loss=9.783233 gmm_loss=-23.579005
+epoch=9 step=600/1920 loss=1.373719 recommendation_loss=0.397787 prior_loss=9.783009 gmm_loss=-23.682105
+epoch=9 step=700/1920 loss=1.375042 recommendation_loss=0.399283 prior_loss=9.783084 gmm_loss=-25.493692
+epoch=9 step=800/1920 loss=1.379116 recommendation_loss=0.403182 prior_loss=9.784541 gmm_loss=-25.203517
+epoch=9 step=900/1920 loss=1.377438 recommendation_loss=0.401519 prior_loss=9.785151 gmm_loss=-25.955073
+epoch=9 step=1000/1920 loss=1.376708 recommendation_loss=0.400446 prior_loss=9.785328 gmm_loss=-22.708765
+epoch=9 step=1100/1920 loss=1.377699 recommendation_loss=0.401587 prior_loss=9.784703 gmm_loss=-23.577048
+epoch=9 step=1200/1920 loss=1.377589 recommendation_loss=0.401373 prior_loss=9.784783 gmm_loss=-22.625140
+epoch=9 step=1300/1920 loss=1.378993 recommendation_loss=0.402824 prior_loss=9.785475 gmm_loss=-23.788508
+epoch=9 step=1400/1920 loss=1.379427 recommendation_loss=0.403189 prior_loss=9.785971 gmm_loss=-23.590890
+epoch=9 step=1500/1920 loss=1.379293 recommendation_loss=0.402879 prior_loss=9.786876 gmm_loss=-22.734680
+epoch=9 step=1600/1920 loss=1.378519 recommendation_loss=0.401945 prior_loss=9.787474 gmm_loss=-21.729902
+epoch=9 step=1700/1920 loss=1.378513 recommendation_loss=0.401949 prior_loss=9.787442 gmm_loss=-21.797581
+epoch=9 step=1800/1920 loss=1.379036 recommendation_loss=0.402361 prior_loss=9.787865 gmm_loss=-21.111938
+epoch=9 step=1900/1920 loss=1.378939 recommendation_loss=0.402248 prior_loss=9.788279 gmm_loss=-21.376745
+epoch=9 step=1920/1920 loss=1.378546 recommendation_loss=0.401885 prior_loss=9.788131 gmm_loss=-21.521863
+validation epoch=9 NDCG@10=0.002958 HR@10=0.006762
+epoch=10 step=100/1920 loss=1.287948 recommendation_loss=0.312882 prior_loss=9.782809 gmm_loss=-32.148591
+epoch=10 step=200/1920 loss=1.280048 recommendation_loss=0.305034 prior_loss=9.776125 gmm_loss=-25.990289
+epoch=10 step=300/1920 loss=1.275079 recommendation_loss=0.300354 prior_loss=9.772524 gmm_loss=-25.276785
+epoch=10 step=400/1920 loss=1.277199 recommendation_loss=0.302081 prior_loss=9.771643 gmm_loss=-20.459846
+epoch=10 step=500/1920 loss=1.278361 recommendation_loss=0.302968 prior_loss=9.774559 gmm_loss=-20.627731
+epoch=10 step=600/1920 loss=1.279242 recommendation_loss=0.303560 prior_loss=9.775609 gmm_loss=-18.789289
+epoch=10 step=700/1920 loss=1.281776 recommendation_loss=0.304618 prior_loss=9.774013 gmm_loss=-2.434173
+epoch=10 step=800/1920 loss=1.280804 recommendation_loss=0.303867 prior_loss=9.774240 gmm_loss=-4.866274
+epoch=10 step=900/1920 loss=1.281678 recommendation_loss=0.304847 prior_loss=9.774872 gmm_loss=-6.561802
+epoch=10 step=1000/1920 loss=1.281044 recommendation_loss=0.304443 prior_loss=9.774787 gmm_loss=-8.776078
+epoch=10 step=1100/1920 loss=1.281301 recommendation_loss=0.304813 prior_loss=9.775015 gmm_loss=-10.135894
+epoch=10 step=1200/1920 loss=1.281986 recommendation_loss=0.305479 prior_loss=9.776336 gmm_loss=-11.264517
+epoch=10 step=1300/1920 loss=1.281702 recommendation_loss=0.305256 prior_loss=9.776432 gmm_loss=-11.970847
+epoch=10 step=1400/1920 loss=1.282984 recommendation_loss=0.306497 prior_loss=9.776392 gmm_loss=-11.524370
+epoch=10 step=1500/1920 loss=1.282815 recommendation_loss=0.306392 prior_loss=9.777081 gmm_loss=-12.858661
+epoch=10 step=1600/1920 loss=1.282615 recommendation_loss=0.306141 prior_loss=9.777392 gmm_loss=-12.653220
+epoch=10 step=1700/1920 loss=1.282341 recommendation_loss=0.305585 prior_loss=9.777928 gmm_loss=-10.363358
+epoch=10 step=1800/1920 loss=1.282732 recommendation_loss=0.305818 prior_loss=9.778235 gmm_loss=-9.097238
+epoch=10 step=1900/1920 loss=1.282555 recommendation_loss=0.305544 prior_loss=9.778816 gmm_loss=-8.709983
+epoch=10 step=1920/1920 loss=1.282444 recommendation_loss=0.305384 prior_loss=9.778980 gmm_loss=-8.381684
+validation epoch=10 NDCG@10=0.008971 HR@10=0.019396
+epoch=11 step=100/1920 loss=1.225191 recommendation_loss=0.251307 prior_loss=9.744845 gmm_loss=-6.001625
+epoch=11 step=200/1920 loss=1.226703 recommendation_loss=0.251991 prior_loss=9.758730 gmm_loss=-11.610370
+epoch=11 step=300/1920 loss=1.226660 recommendation_loss=0.251739 prior_loss=9.759594 gmm_loss=-10.378127
+epoch=11 step=400/1920 loss=1.227526 recommendation_loss=0.252752 prior_loss=9.757993 gmm_loss=-10.257470
+epoch=11 step=500/1920 loss=1.228450 recommendation_loss=0.253466 prior_loss=9.757806 gmm_loss=-7.962335
+epoch=11 step=600/1920 loss=1.228186 recommendation_loss=0.253087 prior_loss=9.759963 gmm_loss=-8.974076
+epoch=11 step=700/1920 loss=1.228289 recommendation_loss=0.252816 prior_loss=9.762589 gmm_loss=-7.856767
+epoch=11 step=800/1920 loss=1.228974 recommendation_loss=0.253165 prior_loss=9.764624 gmm_loss=-6.536338
+epoch=11 step=900/1920 loss=1.229289 recommendation_loss=0.253207 prior_loss=9.766753 gmm_loss=-5.936367
+epoch=11 step=1000/1920 loss=1.228841 recommendation_loss=0.252748 prior_loss=9.767772 gmm_loss=-6.841169
+epoch=11 step=1100/1920 loss=1.228793 recommendation_loss=0.252496 prior_loss=9.767822 gmm_loss=-4.847783
+epoch=11 step=1200/1920 loss=1.228380 recommendation_loss=0.252243 prior_loss=9.766859 gmm_loss=-5.487610
+epoch=11 step=1300/1920 loss=1.228097 recommendation_loss=0.252014 prior_loss=9.767279 gmm_loss=-6.445236
+epoch=11 step=1400/1920 loss=1.228288 recommendation_loss=0.252116 prior_loss=9.767781 gmm_loss=-6.068545
+epoch=11 step=1500/1920 loss=1.228168 recommendation_loss=0.251899 prior_loss=9.768877 gmm_loss=-6.185126
+epoch=11 step=1600/1920 loss=1.227565 recommendation_loss=0.251397 prior_loss=9.768719 gmm_loss=-7.036446
+epoch=11 step=1700/1920 loss=1.228336 recommendation_loss=0.251923 prior_loss=9.769680 gmm_loss=-5.549069
+epoch=11 step=1800/1920 loss=1.228700 recommendation_loss=0.252022 prior_loss=9.771053 gmm_loss=-4.279315
+epoch=11 step=1900/1920 loss=1.229214 recommendation_loss=0.251964 prior_loss=9.771821 gmm_loss=0.680305
+epoch=11 step=1920/1920 loss=1.229229 recommendation_loss=0.251950 prior_loss=9.771902 gmm_loss=0.893335
+validation epoch=11 NDCG@10=0.003438 HR@10=0.007639
+epoch=12 step=100/1920 loss=1.194612 recommendation_loss=0.221195 prior_loss=9.746123 gmm_loss=-11.954470
+epoch=12 step=200/1920 loss=1.185173 recommendation_loss=0.211559 prior_loss=9.747311 gmm_loss=-11.165419
+epoch=12 step=300/1920 loss=1.185143 recommendation_loss=0.211187 prior_loss=9.753214 gmm_loss=-13.652662
+epoch=12 step=400/1920 loss=1.184533 recommendation_loss=0.210105 prior_loss=9.754574 gmm_loss=-10.297873
+epoch=12 step=500/1920 loss=1.184664 recommendation_loss=0.209668 prior_loss=9.752571 gmm_loss=-2.606734
+epoch=12 step=600/1920 loss=1.183581 recommendation_loss=0.208257 prior_loss=9.752667 gmm_loss=0.566659
+epoch=12 step=700/1920 loss=1.183847 recommendation_loss=0.208813 prior_loss=9.753838 gmm_loss=-3.501478
+epoch=12 step=800/1920 loss=1.184506 recommendation_loss=0.209253 prior_loss=9.754131 gmm_loss=-1.603697
+epoch=12 step=900/1920 loss=1.187031 recommendation_loss=0.211817 prior_loss=9.754684 gmm_loss=-2.549449
+epoch=12 step=1000/1920 loss=1.186506 recommendation_loss=0.211196 prior_loss=9.755005 gmm_loss=-1.906718
+epoch=12 step=1100/1920 loss=1.187370 recommendation_loss=0.211878 prior_loss=9.756908 gmm_loss=-1.990877
+epoch=12 step=1200/1920 loss=1.188238 recommendation_loss=0.212583 prior_loss=9.757663 gmm_loss=-1.107564
+epoch=12 step=1300/1920 loss=1.188115 recommendation_loss=0.212324 prior_loss=9.758848 gmm_loss=-0.938161
+epoch=12 step=1400/1920 loss=1.189642 recommendation_loss=0.213127 prior_loss=9.760710 gmm_loss=4.442156
+epoch=12 step=1500/1920 loss=1.190311 recommendation_loss=0.213107 prior_loss=9.762010 gmm_loss=10.027941
+epoch=12 step=1600/1920 loss=1.190649 recommendation_loss=0.213493 prior_loss=9.763293 gmm_loss=8.264472
+epoch=12 step=1700/1920 loss=1.191520 recommendation_loss=0.213495 prior_loss=9.764328 gmm_loss=15.922549
+epoch=12 step=1800/1920 loss=1.191844 recommendation_loss=0.213301 prior_loss=9.765502 gmm_loss=19.921573
+epoch=12 step=1900/1920 loss=1.191987 recommendation_loss=0.213473 prior_loss=9.766357 gmm_loss=18.782442
+epoch=12 step=1920/1920 loss=1.192124 recommendation_loss=0.213644 prior_loss=9.766553 gmm_loss=18.241764
+validation epoch=12 NDCG@10=0.002588 HR@10=0.005591
+early stopping at epoch 12
+{
+  "0": {
+    "count": 22029,
+    "hr@10": 0.09165191338689908,
+    "hr@5": 0.05056970357256344,
+    "ndcg@10": 0.04381369130112891,
+    "ndcg@5": 0.030655567713925268
+  },
+  "1": {
+    "count": 36934,
+    "hr@10": 0.08255266150430497,
+    "hr@5": 0.04535116694644501,
+    "ndcg@10": 0.03976932500545621,
+    "ndcg@5": 0.027906786252290816
+  },
+  "2": {
+    "count": 15449,
+    "hr@10": 0.09159168878244546,
+    "hr@5": 0.0517185578354586,
+    "ndcg@10": 0.04449236698466517,
+    "ndcg@5": 0.03177486349622155
+  },
+  "3": {
+    "count": 9918,
+    "hr@10": 0.08882839282113329,
+    "hr@5": 0.04698527929017947,
+    "ndcg@10": 0.04112254858561659,
+    "ndcg@5": 0.027671756432863934
+  },
+  "4": {
+    "count": 4555,
+    "hr@10": 0.06893523600439078,
+    "hr@5": 0.041053787047200876,
+    "ndcg@10": 0.033429959479635035,
+    "ndcg@5": 0.024488725459534094
+  },
+  "overall": {
+    "count": 88885,
+    "hr@10": 0.08638127918096417,
+    "hr@5": 0.04771333745851381,
+    "ndcg@10": 0.04141870434012439,
+    "ndcg@5": 0.029058955229055293
+  }
+}

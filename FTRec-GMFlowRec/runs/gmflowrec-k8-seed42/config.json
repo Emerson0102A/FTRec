@@ -1,0 +1,114 @@
+{
+  "arguments": {
+    "amp": true,
+    "batch_size": 256,
+    "checkpoint": null,
+    "device": "cuda",
+    "dropout_rate": 0.1,
+    "epochs": 100,
+    "eval_batch_size": 512,
+    "eval_every": 1,
+    "eval_seed": 42,
+    "fusion_weight": 0.9,
+    "gmm_weight": 0.0001,
+    "grad_clip": 5.0,
+    "hidden_units": 64,
+    "inference_only": false,
+    "lr": 0.001,
+    "max_eval_examples": null,
+    "max_train_examples": null,
+    "maxlen": 50,
+    "min_scale": 0.001,
+    "num_blocks": 2,
+    "num_eval_negatives": 999,
+    "num_heads": 2,
+    "num_mixtures": 8,
+    "num_workers": 4,
+    "ode_steps": 8,
+    "parquet_dir": "/root/autodl-tmp/FTRec/data/MDSR-Amazon",
+    "patience": 10,
+    "prior_weight": 0.1,
+    "run_dir": "runs/gmflowrec-k8-seed42",
+    "seed": 42,
+    "weight_decay": 0.0
+  },
+  "data": {
+    "domain_offsets_zero_based": {
+      "0": [
+        0,
+        45662
+      ],
+      "1": [
+        45662,
+        126891
+      ],
+      "2": [
+        126891,
+        167982
+      ],
+      "3": [
+        167982,
+        198768
+      ],
+      "4": [
+        198768,
+        218846
+      ]
+    },
+    "evaluation_pairing": "test[row] == valid[row] + one final target",
+    "id_conversion": "ftrec_item_id = mdsr_item_id + 1",
+    "item_count": 218846,
+    "root": "/root/autodl-tmp/FTRec/data/MDSR-Amazon",
+    "test_length_range": [
+      12,
+      50
+    ],
+    "test_sequences": 88885,
+    "train_length_range": [
+      12,
+      50
+    ],
+    "train_sequences": 491445,
+    "user_count": 580329,
+    "validation_length_range": [
+      11,
+      49
+    ],
+    "validation_sequences": 88885
+  },
+  "model": {
+    "domain_offsets": {
+      "0": [
+        0,
+        45662
+      ],
+      "1": [
+        45662,
+        126891
+      ],
+      "2": [
+        126891,
+        167982
+      ],
+      "3": [
+        167982,
+        198768
+      ],
+      "4": [
+        198768,
+        218846
+      ]
+    },
+    "dropout_rate": 0.1,
+    "fusion_weight": 0.9,
+    "gmm_weight": 0.0001,
+    "hidden_units": 64,
+    "item_count": 218846,
+    "maxlen": 50,
+    "min_scale": 0.001,
+    "num_blocks": 2,
+    "num_heads": 2,
+    "num_mixtures": 8,
+    "prior_weight": 0.1
+  }
+}
