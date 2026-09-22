@@ -1,7 +1,14 @@
 Dataset
 .worktrees/
+
 /data/
-/runs/
+
+/runs/**
+!/runs/**/
+!/runs/**/config.json
+!/runs/**/results.json
+!/runs/**/train.log
+
 __pycache__/
 .pytest_cache/
 *.pyc
