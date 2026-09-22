@@ -195,6 +195,29 @@ def test_mymodel4_behavior_uses_complete_shared_private_backbone(tmp_path):
     assert all(parameter.grad is None for parameter in tower.private_blocks[1].parameters())
 
 
+def test_mymodel4_behavior_supports_bfloat16_autocast(tmp_path):
+    _artifact(tmp_path)
+    model = SASRec(
+        SASRecConfig(
+            num_items=4,
+            hidden_size=4,
+            num_blocks=2,
+            shared_behavior_blocks=1,
+            num_heads=1,
+            dropout=0,
+            maxlen=3,
+            item_embedding_mode="mymodel4_behavior",
+            attribute_artifact=str(tmp_path),
+            item_domain_file=str(_domain_file(tmp_path)),
+        )
+    )
+    with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+        scores = model.score(torch.tensor([[0, 1, 3]]), torch.tensor([[1, 2]]))
+
+    assert scores.shape == (1, 2)
+    assert torch.isfinite(scores).all()
+
+
 def test_mymodel4_behavior_runs_a_balanced_multidomain_update(tmp_path):
     from ftrec.training.engine import OptimizerSettings, build_optimizers
     from ftrec.training.pretrain import run_multitask_step

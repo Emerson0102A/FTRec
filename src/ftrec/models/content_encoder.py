@@ -362,7 +362,8 @@ class _SharedPrivateProjection(nn.Module):
         for mapped_domain, projection in enumerate(self.private, start=1):
             mask = domain_ids.eq(mapped_domain)
             if torch.any(mask):
-                output[mask] = projection(compressed[mask])
+                projected = projection(compressed[mask])
+                output[mask] = projected.to(output.dtype)
         return output
 
 
@@ -472,9 +473,10 @@ class SharedPrivateBehaviorItemEncoder(nn.Module):
         for mapped_domain in range(1, self.num_domains + 1):
             mask = domains.eq(mapped_domain)
             if torch.any(mask):
-                query[mask] = self.attribute_queries[
+                domain_query = self.attribute_queries[
                     mapped_domain - 1
                 ] + self.attribute_title_queries[mapped_domain - 1](title[mask])
+                query[mask] = domain_query.to(query.dtype)
         logits = torch.einsum("...ah,...h->...a", attributes, query)
         logits = logits / (self.hidden_size**0.5 * self.attribute_temperature)
         weights = FusedContentItemEncoder._masked_weights(logits, valid)
@@ -491,7 +493,8 @@ class SharedPrivateBehaviorItemEncoder(nn.Module):
         for mapped_domain, norm in enumerate(self.norms, start=1):
             mask = domains.eq(mapped_domain)
             if torch.any(mask):
-                result[mask] = norm(values[mask])
+                normalized = norm(values[mask])
+                result[mask] = normalized.to(result.dtype)
         available = self.content_present[ids] & ids.ne(0)
         return result * available.unsqueeze(-1).to(result.dtype)
 
