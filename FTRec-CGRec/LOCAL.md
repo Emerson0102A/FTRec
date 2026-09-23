@@ -42,17 +42,21 @@ HR@5/NDCG@5。这里特意缩小隐藏维度和序列长度，以确认代码路
 `PARQUET_DIR` 必须包含 `mappings.pkl`、`train_new.parquet`、`valid_new.parquet`
 和 `test_new.parquet`。先运行与开源代码数据集行为一致的模式：官方代码将
 `cat1` 和 `cat2` 都直接设为域序列，随附的两个类别词表也只有域名。此模式
-不需要另外的类别文件。从仓库根目录执行：
+不需要另外的类别文件。服务器沿用现有 `ftrec` 环境，在 tmux 中运行；
+仓库代码和上述 Parquet 文件需先同步到服务器。
 
 ```bash
-python -m pip install -e .
-python FTRec-CGRec/train_parquet.py \
-  --parquet_dir /path/to/MDSR-Amazon \
-  --official_domain_categories \
-  --run_dir runs/cgrec-official-domains \
-  --target_domain 0 \
-  --device cuda \
-  --seed 42
+tmux new -s cgrec-official
+```
+
+进入 tmux 窗口后执行：
+
+```bash
+cd /path/to/FTRec
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate ftrec
+bash scripts/check_environment.sh
+python -c "import torch, pyarrow; print(torch.cuda.is_available(), pyarrow.__version__)"
 ```
 
 先用下面的短程运行检查服务器环境；其中减少样本和负例，因此结果**不能**用于
@@ -71,29 +75,48 @@ python FTRec-CGRec/train_parquet.py \
 确认显卡可用、短程运行完成后，对五个域分别训练五个种子：
 
 ```bash
+mkdir -p runs
+set -o pipefail
 bash FTRec-CGRec/run_parquet_sweep.sh /path/to/MDSR-Amazon runs/cgrec-official-domains \
-  --official_domain_categories
+  --official_domain_categories 2>&1 | tee runs/cgrec-official-domains.log
 python FTRec-CGRec/summarize_parquet.py --run_dir runs/cgrec-official-domains
 ```
+
+按 `Ctrl-b`、`d` 离开 tmux 而不中断训练；以后用
+`tmux attach -t cgrec-official` 查看。若 SSH 断开，tmux 内任务继续运行。
 
 为了检验论文所述的真实两级类别，再运行单独的元数据模式。需要与
 `mappings.pkl` 的 ASIN 和 item ID 逐条对齐的 `catalog.jsonl.gz`。本机已有
 `data/attribute_experiment/catalog.jsonl.gz`；该文件较大，不在 Git 中，需单独
 放到服务器。如服务器有 Amazon 2023 各域 `meta_*.jsonl.gz` 原始元数据，也可用
-本仓库的命令生成：
+现有 `ftrec-attr` 环境生成：
 
 ```bash
-ftrec-attribute-catalog \
+conda activate ftrec-attr
+python src/ftrec/attributes/catalog.py \
   --dataset-dir /path/to/Amazon2023-metadata \
   --mappings /path/to/MDSR-Amazon/mappings.pkl \
   --output /path/to/catalog.jsonl.gz
+conda activate ftrec
 ```
 
-然后运行元数据层级模式：
+官方模式结束后，在普通 SSH shell 中另开 tmux 会话运行元数据层级模式；
+同一张 GPU 上不要同时启动两组完整实验：
 
 ```bash
+tmux new -s cgrec-metadata
+```
+
+进入新 tmux 窗口后执行：
+
+```bash
+cd /path/to/FTRec
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate ftrec
+mkdir -p runs
+set -o pipefail
 bash FTRec-CGRec/run_parquet_sweep.sh /path/to/MDSR-Amazon runs/cgrec-metadata \
-  --category_catalog /path/to/catalog.jsonl.gz
+  --category_catalog /path/to/catalog.jsonl.gz 2>&1 | tee runs/cgrec-metadata.log
 python FTRec-CGRec/summarize_parquet.py --run_dir runs/cgrec-metadata
 ```
 
@@ -111,8 +134,8 @@ Adam 学习率 0.001、batch 256、最多 100 epochs、验证集连续 10 次未
 `FTRec-GMFlowRec/gmflowrec_data.py`，固定评测种子 3407。记录四项
 HR/NDCG@5/10，汇总脚本将五个种子的均值和样本标准差与 GMFlowRec Table 1
 的 CGRec 数值并列展示。默认会预生成验证/测试候选，内存有限时可用
-`--no_precompute_eval`，或减小 `--eval_batch_size`。服务器依赖带 CUDA 的
-PyTorch；`pip install -e .` 应在已安装兼容 CUDA 版 PyTorch 的环境中执行。
+`--no_precompute_eval`，或减小 `--eval_batch_size`。运行前需确保现有
+`ftrec` 环境能导入 CUDA PyTorch 和 PyArrow。
 
 ## 与论文 CGRec 的差异
 
