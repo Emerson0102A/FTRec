@@ -40,13 +40,16 @@ HR@5/NDCG@5。这里特意缩小隐藏维度和序列长度，以确认代码路
 ## 用 GMFlowRec 的 Parquet 在服务器训练
 
 `PARQUET_DIR` 必须包含 `mappings.pkl`、`train_new.parquet`、`valid_new.parquet`
-和 `test_new.parquet`。从仓库根目录执行：
+和 `test_new.parquet`。先运行与开源代码数据集行为一致的模式：官方代码将
+`cat1` 和 `cat2` 都直接设为域序列，随附的两个类别词表也只有域名。此模式
+不需要另外的类别文件。从仓库根目录执行：
 
 ```bash
 python -m pip install -e .
 python FTRec-CGRec/train_parquet.py \
   --parquet_dir /path/to/MDSR-Amazon \
-  --run_dir runs/cgrec-parquet \
+  --official_domain_categories \
+  --run_dir runs/cgrec-official-domains \
   --target_domain 0 \
   --device cuda \
   --seed 42
@@ -58,6 +61,7 @@ python FTRec-CGRec/train_parquet.py \
 ```bash
 python FTRec-CGRec/train_parquet.py \
   --parquet_dir /path/to/MDSR-Amazon \
+  --official_domain_categories \
   --run_dir runs/cgrec-smoke \
   --target_domain 0 --device cuda --epochs 1 \
   --max_train_examples 128 --max_eval_examples 32 \
@@ -67,13 +71,37 @@ python FTRec-CGRec/train_parquet.py \
 确认显卡可用、短程运行完成后，对五个域分别训练五个种子：
 
 ```bash
-bash FTRec-CGRec/run_parquet_sweep.sh /path/to/MDSR-Amazon runs/cgrec-parquet
-python FTRec-CGRec/summarize_parquet.py --run_dir runs/cgrec-parquet
+bash FTRec-CGRec/run_parquet_sweep.sh /path/to/MDSR-Amazon runs/cgrec-official-domains \
+  --official_domain_categories
+python FTRec-CGRec/summarize_parquet.py --run_dir runs/cgrec-official-domains
 ```
+
+为了检验论文所述的真实两级类别，再运行单独的元数据模式。需要与
+`mappings.pkl` 的 ASIN 和 item ID 逐条对齐的 `catalog.jsonl.gz`。本机已有
+`data/attribute_experiment/catalog.jsonl.gz`；该文件较大，不在 Git 中，需单独
+放到服务器。如服务器有 Amazon 2023 各域 `meta_*.jsonl.gz` 原始元数据，也可用
+本仓库的命令生成：
+
+```bash
+ftrec-attribute-catalog \
+  --dataset-dir /path/to/Amazon2023-metadata \
+  --mappings /path/to/MDSR-Amazon/mappings.pkl \
+  --output /path/to/catalog.jsonl.gz
+```
+
+然后运行元数据层级模式：
+
+```bash
+bash FTRec-CGRec/run_parquet_sweep.sh /path/to/MDSR-Amazon runs/cgrec-metadata \
+  --category_catalog /path/to/catalog.jsonl.gz
+python FTRec-CGRec/summarize_parquet.py --run_dir runs/cgrec-metadata
+```
+
+不要将不同类别模式写入同一 `run_dir`；汇总工具会拒绝混合结果。
 
 目标域编号：`0` Health、`1` Clothing、`2` Beauty、`3` Grocery、`4` Sports。
 批量脚本依次使用种子 42–46。单次运行把验证集 NDCG@10 最优权重保存为
-`runs/cgrec-parquet/domain-0/seed-42/best.pt`，同时保存 `config.json` 和
+`runs/cgrec-official-domains/domain-0/seed-42/best.pt`，同时保存 `config.json` 和
 `results.json`。批量脚本重启时跳过已有非空 `results.json` 的域/种子，
 可继续未完成的组合；被中断的单次训练会从头开始。
 
@@ -88,11 +116,21 @@ PyTorch；`pip install -e .` 应在已安装兼容 CUDA 版 PyTorch 的环境中
 
 ## 与论文 CGRec 的差异
 
-这个入口保留官方物品序列编码器、逐域损失和 Shapley 计算，目标域映射为模型
-固定使用的 5，其他四域映射为 6–9。Parquet 只有物品、域和时间戳，没有
-`cat1`/`cat2` 两级类别，因此使用官方实现的 `hierarhical=n` 物品级路径；
-**所得数值是可复核的 CGRec 近似复现，不能声称严格复现完整类别模型。**
-此外，训练使用 Parquet 已发布的 `train_new`，验证和测试使用其现成划分，
-无法证明它与原作者 Table 1 的私有数据处理和随机负例完全一致。
+这个入口保留官方序列编码器、三级损失和 Shapley 计算，目标域映射为模型固定
+使用的 5，其他四域映射为 6–9。`--official_domain_categories` 按公开代码将
+两级类别都设为域 ID。这有助于核对开源实现的结果，但不能当成论文所称的
+真实层级类别。Parquet 本身只有物品、域和时间戳。`--category_catalog` 的两级
+类别由同一商品 ASIN 对齐的 Amazon 元数据 `categories` 路径恢复：
+`cat2 = categories[1]`（域下较粗层），`cat1 = categories[2]`（较细层）。
+键包含域和父路径，避免同名类别碰撞。缺失层级用专用标记，不伪造具体类别。
+类别 ID 也与官方词表一样保留 0–4 给特殊符号，真实类别从 5 开始。
+本地目录对全部 218,846 个物品都有元数据，其中 864 个没有可用的粗类别。
+两种类别模式均启用官方的 `hierarhical=y` 路径；要单独运行不使用类别的消融实验，
+必须显式指定 `--item_only`。
+
+原作者未公开 Table 1 所用的类别分层映射规则，因此这个由 Amazon 元数据恢复
+的层级是**明确记录的近似**，不能声称类别 ID 与原论文完全相同。此外，训练
+使用 Parquet 已发布的 `train_new`，验证和测试使用其现成划分，无法证明它与
+原作者 Table 1 的私有数据处理和随机负例完全一致。
 完整 Shapley 路径每个训练 batch 需要多次编码，正式 5×5 次运行可能耗时很长；
 先用单域正式配置测量一个 epoch 的耗时，再安排整组实验。

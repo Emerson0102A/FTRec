@@ -37,10 +37,12 @@ def summarize_ranks(ranks: Iterable[int]) -> dict[str, float | int]:
 def evaluate_model(model, loader, device: torch.device) -> dict[str, float | int]:
     model.eval()
     ranks: list[int] = []
-    for items, domains, candidates, _ in loader:
+    for items, cat1, cat2, domains, candidates, _ in loader:
         items = items.to(device, non_blocking=True)
+        cat1 = cat1.to(device, non_blocking=True)
+        cat2 = cat2.to(device, non_blocking=True)
         domains = domains.to(device, non_blocking=True)
         candidates = candidates.to(device, non_blocking=True)
-        scores = model.score(items, domains, candidates)
+        scores = model.score(items, cat1, cat2, domains, candidates)
         ranks.extend(rank_of_positive(scores, candidates).cpu().tolist())
     return summarize_ranks(ranks)

@@ -32,3 +32,21 @@ def test_summary_reads_runs_and_reports_percent_mean_and_sample_std(tmp_path):
     assert "2/5" in completed.stdout
     assert "15.00 ± 7.07" in completed.stdout
     assert "16.44" in completed.stdout
+
+
+def test_summary_rejects_mixed_category_modes(tmp_path):
+    for seed, mode in enumerate(("hierarchical", "item only")):
+        result = tmp_path / "domain-0" / f"seed-{seed}" / "results.json"
+        result.parent.mkdir(parents=True)
+        result.write_text(json.dumps({
+            "target_domain": 0,
+            "seed": seed,
+            "test": {"hr@5": 0.1, "hr@10": 0.2, "ndcg@5": 0.05, "ndcg@10": 0.1},
+            "protocol": {"category_features": mode},
+        }))
+    completed = subprocess.run(
+        [sys.executable, str(SUMMARY), "--run_dir", str(tmp_path)],
+        capture_output=True, text=True,
+    )
+    assert completed.returncode != 0
+    assert "mixed" in completed.stderr.lower()

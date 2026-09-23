@@ -5,6 +5,7 @@ from __future__ import annotations
 import pickle
 import json
 import math
+import gzip
 import subprocess
 import sys
 from pathlib import Path
@@ -12,6 +13,7 @@ from pathlib import Path
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 import torch
 
 
@@ -19,6 +21,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "FTRec-CGRec"))
 
 from parquet_data import (  # noqa: E402
+    CGRecCategoryMapping,
+    CGRecDomainCategoryMapping,
     CGRecEvaluationDataset,
     CGRecTrainDataset,
     domain_remap,
@@ -55,6 +59,17 @@ def make_fixture(tmp_path: Path) -> Path:
     _write_split(tmp_path / "train_new.parquet", train_items, train_domains)
     _write_split(tmp_path / "valid_new.parquet", valid_items, valid_domains)
     _write_split(tmp_path / "test_new.parquet", test_items, test_domains)
+    with gzip.open(tmp_path / "catalog.jsonl.gz", "wt", encoding="utf-8") as stream:
+        for item_id in range(50):
+            stream.write(json.dumps({
+                "item_id": item_id + 1,
+                "domain_id": item_id // 10,
+                "parent_asin": f"i{item_id}",
+                "categories": (
+                    [f"domain-{item_id // 10}", f"group-{item_id % 3}", f"leaf-{item_id % 5}"]
+                    if item_id != 7 else []
+                ),
+            }) + "\n")
     return tmp_path
 
 
@@ -62,7 +77,7 @@ def test_training_uses_all_training_interactions_and_reserved_ids(tmp_path: Path
     data = load_parquet_data(make_fixture(tmp_path))
     dataset = CGRecTrainDataset(data.train, data.metadata, target_domain=0, maxlen=5, seed=7)
     dataset.set_epoch(2)
-    items, positives, negatives, domains, row_id = dataset[0]
+    items, positives, negatives, _, _, _, _, _, _, domains, row_id = dataset[0]
 
     assert row_id == 0
     assert items.tolist() == [0, 0, 5, 6, 15]
@@ -80,7 +95,7 @@ def test_evaluation_reuses_gmflowrec_candidates_and_target_filter(tmp_path: Path
         num_negatives=3, eval_seed=11,
     )
     assert len(dataset) == 1
-    items, domains, candidates, row_id = dataset[0]
+    items, _, _, domains, candidates, row_id = dataset[0]
     assert row_id == 0
     assert items.tolist() == [0, 0, 15, 16]
     assert domains.tolist() == [0, 0, 6, 6]
@@ -88,9 +103,9 @@ def test_evaluation_reuses_gmflowrec_candidates_and_target_filter(tmp_path: Path
     assert len(set(candidates.tolist())) == 4
     assert all(5 <= candidate < 15 for candidate in candidates)
     assert set(candidates[1:]).isdisjoint({5})
-    assert np.array_equal(candidates, dataset[0][2])
+    assert np.array_equal(candidates, dataset[0][4])
     dataset.precompute()
-    assert np.array_equal(candidates, dataset[0][2])
+    assert np.array_equal(candidates, dataset[0][4])
 
 
 def test_each_target_has_stable_original_domain_mapping() -> None:
@@ -98,17 +113,66 @@ def test_each_target_has_stable_original_domain_mapping() -> None:
     assert domain_remap(3) == {3: 5, 0: 6, 1: 7, 2: 8, 4: 9}
 
 
+def test_catalog_restores_two_category_levels_and_checks_item_alignment(tmp_path: Path) -> None:
+    root = make_fixture(tmp_path)
+    data = load_parquet_data(root)
+    categories = CGRecCategoryMapping(root / "catalog.jsonl.gz", root / "mappings.pkl", data.metadata)
+    assert categories.cat1_size > categories.cat2_size > 1
+    assert categories.cat2_by_item[5] == categories.cat2_by_item[8]
+    assert categories.cat1_by_item[5] != categories.cat1_by_item[8]
+    assert categories.cat1_by_item[12] > 0  # missing category uses its own token
+
+    train = CGRecTrainDataset(data.train, data.metadata, 0, 5, 7, categories=categories)
+    item, pos, neg, cat1, cat1_pos, cat1_neg, cat2, cat2_pos, cat2_neg, _, _ = train[0]
+    assert np.array_equal(cat1, categories.cat1_by_item[item])
+    assert np.array_equal(cat2, categories.cat2_by_item[item])
+    assert np.array_equal(cat1_pos, categories.cat1_by_item[pos])
+    assert np.array_equal(cat2_pos, categories.cat2_by_item[pos])
+    assert np.all(cat1_neg[item > 0] > 0)
+    assert np.all(cat2_neg[item > 0] > 0)
+    assert np.array_equal(neg, train[0][2])
+
+    evaluation = CGRecEvaluationDataset(data.valid, data.metadata, 0, 4, 3, 11, categories=categories)
+    context, eval_cat1, eval_cat2, _, _, _ = evaluation[0]
+    assert np.array_equal(eval_cat1, categories.cat1_by_item[context])
+    assert np.array_equal(eval_cat2, categories.cat2_by_item[context])
+
+    broken = tmp_path / "broken.jsonl.gz"
+    with gzip.open(broken, "wt", encoding="utf-8") as stream:
+        stream.write(json.dumps({"item_id": 1, "domain_id": 0, "parent_asin": "WRONG", "categories": []}) + "\n")
+    with pytest.raises(ValueError, match="ASIN|catalog"):
+        CGRecCategoryMapping(broken, root / "mappings.pkl", data.metadata)
+
+
+def test_released_code_domain_categories_mode(tmp_path: Path) -> None:
+    data = load_parquet_data(make_fixture(tmp_path))
+    categories = CGRecDomainCategoryMapping(data.metadata, target_domain=3)
+    assert categories.cat1_size == 12
+    assert categories.cat2_size == 11
+    assert categories.negative_min == 5
+    assert np.array_equal(categories.cat1_by_item, categories.cat2_by_item)
+    assert categories.cat1_by_item[5] == 6  # original domain 0 becomes source 6
+    assert categories.cat1_by_item[35] == 5  # original domain 3 becomes target 5
+    sample = CGRecTrainDataset(data.train, data.metadata, 3, 5, 7, categories=categories)[0]
+    assert np.all(sample[5][sample[0] > 0] >= 5)
+    assert np.all(sample[8][sample[0] > 0] >= 5)
+
+
 def test_original_cgrec_shapley_path_trains_and_scores_without_categories(tmp_path: Path) -> None:
     torch.set_num_threads(2)
     data = load_parquet_data(make_fixture(tmp_path))
     dataset = CGRecTrainDataset(data.train, data.metadata, target_domain=0, maxlen=5, seed=7)
-    items, positive, negative, domains, _ = dataset[0]
+    items, positive, negative, _, _, _, _, _, _, domains, _ = dataset[0]
     model = CGRecParquetModel(
         item_count=50, maxlen=5, hidden_size=8, num_layers=1,
         num_heads=2, dropout=0.0, device="cpu", shapley=True,
     )
     batch = lambda array: torch.as_tensor(array).unsqueeze(0)
-    loss = model.train_loss(batch(items), batch(positive), batch(negative), batch(domains))
+    zeros = torch.zeros(1, len(items), dtype=torch.long)
+    loss = model.train_loss(
+        batch(items), batch(positive), batch(negative),
+        zeros, zeros, zeros, zeros, zeros, zeros, batch(domains),
+    )
     assert torch.isfinite(loss)
     loss.backward()
     assert model.item_embeddings.weight.grad is not None
@@ -119,10 +183,37 @@ def test_original_cgrec_shapley_path_trains_and_scores_without_categories(tmp_pa
         data.valid, data.metadata, target_domain=0, maxlen=4,
         num_negatives=3, eval_seed=11,
     )
-    context, context_domains, candidates, _ = evaluation[0]
-    scores = model.score(batch(context), batch(context_domains), batch(candidates))
+    context, _, _, context_domains, candidates, _ = evaluation[0]
+    eval_zeros = torch.zeros(1, len(context), dtype=torch.long)
+    scores = model.score(
+        batch(context), eval_zeros, eval_zeros,
+        batch(context_domains), batch(candidates),
+    )
     assert scores.shape == (1, 4)
     assert torch.isfinite(scores).all()
+
+
+def test_hierarchical_cgrec_uses_real_category_inputs(tmp_path: Path) -> None:
+    torch.set_num_threads(2)
+    root = make_fixture(tmp_path)
+    data = load_parquet_data(root)
+    categories = CGRecCategoryMapping(root / "catalog.jsonl.gz", root / "mappings.pkl", data.metadata)
+    sample = CGRecTrainDataset(data.train, data.metadata, 0, 5, 7, categories=categories)[0]
+    model = CGRecParquetModel(
+        item_count=50, maxlen=5, hidden_size=8, num_layers=1,
+        num_heads=2, dropout=0.0, device="cpu", shapley=True,
+        cat1_size=categories.cat1_size, cat2_size=categories.cat2_size,
+        hierarchical=True,
+    )
+    tensors = [torch.as_tensor(array).unsqueeze(0) for array in sample[:-1]]
+    loss = model.train_loss(*tensors)
+    assert torch.isfinite(loss)
+    loss.backward()
+    assert model.cat1_embeddings.weight.grad is not None
+    assert model.cat2_embeddings.weight.grad is not None
+    assert model.item_embeddings.weight.grad is not None
+    assert torch.count_nonzero(model.cat1_embeddings.weight.grad) > 0
+    assert torch.count_nonzero(model.cat2_embeddings.weight.grad) > 0
 
 
 def test_ranking_uses_deterministic_item_id_tie_break() -> None:
@@ -145,6 +236,7 @@ def test_parquet_cli_trains_selects_checkpoint_and_writes_result(tmp_path: Path)
             sys.executable,
             str(ROOT / "FTRec-CGRec" / "train_parquet.py"),
             "--parquet_dir", str(data_dir),
+            "--category_catalog", str(data_dir / "catalog.jsonl.gz"),
             "--run_dir", str(run_dir),
             "--target_domain", "0",
             "--device", "cpu",
@@ -171,4 +263,4 @@ def test_parquet_cli_trains_selects_checkpoint_and_writes_result(tmp_path: Path)
     assert report["best_epoch"] == 1
     assert report["validation"]["count"] == 1
     assert report["test"]["count"] == 1
-    assert report["protocol"]["category_features"] == "unavailable; item-level CGRec"
+    assert report["protocol"]["category_features"] == "Amazon metadata categories; hierarchical CGRec"

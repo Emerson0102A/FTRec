@@ -1,4 +1,4 @@
-"""Train item-level CGRec on GMFlowRec's published Amazon Parquet splits."""
+"""Train released-code or metadata-hierarchy CGRec on GMFlowRec Parquet splits."""
 
 from __future__ import annotations
 
@@ -12,7 +12,11 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from parquet_data import CGRecEvaluationDataset, CGRecTrainDataset, domain_remap, load_parquet_data
+from parquet_data import (
+    CGRecCategoryMapping, CGRecDomainCategoryMapping,
+    CGRecEvaluationDataset, CGRecTrainDataset,
+    domain_remap, load_parquet_data,
+)
 from parquet_eval import evaluate_model
 from parquet_model import CGRecParquetModel
 
@@ -20,6 +24,10 @@ from parquet_model import CGRecParquetModel
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--parquet_dir", type=Path, required=True)
+    category_options = parser.add_mutually_exclusive_group(required=True)
+    category_options.add_argument("--category_catalog", type=Path)
+    category_options.add_argument("--official_domain_categories", action="store_true")
+    category_options.add_argument("--item_only", action="store_true")
     parser.add_argument("--run_dir", type=Path, default=Path("runs/cgrec-parquet"))
     parser.add_argument("--target_domain", type=int, choices=range(5), required=True)
     parser.add_argument("--device", default="cuda")
@@ -92,18 +100,15 @@ def train_epoch(model, loader, optimizer, device: torch.device) -> float:
     model.train()
     total_loss = 0.0
     examples = 0
-    for items, positive, negative, domains, _ in loader:
-        items = items.to(device, non_blocking=True)
-        positive = positive.to(device, non_blocking=True)
-        negative = negative.to(device, non_blocking=True)
-        domains = domains.to(device, non_blocking=True)
-        loss = model.train_loss(items, positive, negative, domains)
+    for batch in loader:
+        tensors = [value.to(device, non_blocking=True) for value in batch[:-1]]
+        loss = model.train_loss(*tensors)
         if not torch.isfinite(loss):
             raise ValueError("CGRec produced a non-finite training loss")
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         optimizer.step()
-        size = len(items)
+        size = len(tensors[0])
         total_loss += float(loss.detach()) * size
         examples += size
     if not examples:
@@ -121,17 +126,27 @@ def main() -> None:
     set_seed(args.seed)
     started = time.time()
     data = load_parquet_data(args.parquet_dir)
+    if args.category_catalog is not None:
+        categories = CGRecCategoryMapping(
+            args.category_catalog, args.parquet_dir / "mappings.pkl", data.metadata
+        )
+    elif args.official_domain_categories:
+        categories = CGRecDomainCategoryMapping(data.metadata, args.target_domain)
+    else:
+        categories = None
     train_data = CGRecTrainDataset(
         data.train, data.metadata, args.target_domain, args.maxlen, args.seed,
-        max_examples=args.max_train_examples,
+        max_examples=args.max_train_examples, categories=categories,
     )
     valid_data = CGRecEvaluationDataset(
         data.valid, data.metadata, args.target_domain, args.maxlen,
         args.num_eval_negatives, args.eval_seed, args.max_eval_examples,
+        categories=categories,
     )
     test_data = CGRecEvaluationDataset(
         data.test, data.metadata, args.target_domain, args.maxlen,
         args.num_eval_negatives, args.eval_seed, args.max_eval_examples,
+        categories=categories,
     )
     if not valid_data or not test_data:
         raise ValueError("selected target domain has no validation or test cases")
@@ -157,6 +172,9 @@ def main() -> None:
         dropout=args.dropout,
         device=device,
         shapley=not args.disable_shapley,
+        cat1_size=categories.cat1_size if categories else 1,
+        cat2_size=categories.cat2_size if categories else 1,
+        hierarchical=categories is not None,
     )
     optimizer = torch.optim.Adam(
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
@@ -166,6 +184,8 @@ def main() -> None:
     output.mkdir(parents=True, exist_ok=True)
     configuration = vars(args).copy()
     configuration["parquet_dir"] = str(args.parquet_dir.resolve())
+    if args.category_catalog is not None:
+        configuration["category_catalog"] = str(args.category_catalog.resolve())
     configuration["run_dir"] = str(output.resolve())
     (output / "config.json").write_text(
         json.dumps(configuration, indent=2, sort_keys=True), encoding="utf-8"
@@ -207,7 +227,16 @@ def main() -> None:
         "protocol": {
             "source": "cpark88/CGRec at 9108dd04637decd616448e30d1d604eddb2a3543",
             "dataset": "GMFlowRec MDSR-Amazon train_new/valid_new/test_new.parquet",
-            "category_features": "unavailable; item-level CGRec",
+            "category_features": categories.source if categories else "unavailable; item-level CGRec",
+            "category_catalog": (
+                str(categories.path.resolve()) if categories and categories.path else None
+            ),
+            "category_catalog_sha256": categories.sha256 if categories else None,
+            "cat1_size": categories.cat1_size if categories else None,
+            "cat2_size": categories.cat2_size if categories else None,
+            "category_missing_coarse": categories.missing_coarse if categories else None,
+            "category_missing_fine": categories.missing_fine if categories else None,
+            "category_levels": categories.level_description if categories else None,
             "shapley": not args.disable_shapley,
             "item_id": "parquet zero-based + 5; IDs 0..4 reserved",
             "domain_mapping": domain_remap(args.target_domain),

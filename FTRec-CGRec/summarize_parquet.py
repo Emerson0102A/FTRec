@@ -24,17 +24,31 @@ PAPER = (
 
 def summarize(run_dir: Path) -> list[str]:
     runs: dict[int, dict[int, dict]] = {domain: {} for domain in range(5)}
+    modes: set[str] = set()
+    catalog_hashes: set[str] = set()
     for path in sorted(run_dir.glob("domain-*/seed-*/results.json")):
         result = json.loads(path.read_text(encoding="utf-8"))
+        protocol = result.get("protocol", {})
+        mode = protocol.get("category_features")
+        if mode is not None:
+            modes.add(mode)
+        catalog_hash = protocol.get("category_catalog_sha256")
+        if catalog_hash is not None:
+            catalog_hashes.add(catalog_hash)
         domain, seed = result["target_domain"], result["seed"]
         if domain not in runs:
             raise ValueError(f"unexpected target domain {domain} in {path}")
         if seed in runs[domain]:
             raise ValueError(f"duplicate domain {domain}, seed {seed}")
         runs[domain][seed] = result["test"]
+    if len(modes) > 1:
+        raise ValueError(f"mixed category modes in run directory: {sorted(modes)}")
+    if len(catalog_hashes) > 1:
+        raise ValueError("mixed category catalogs in run directory")
 
     lines = [
         "CGRec on GMFlowRec MDSR-Amazon Parquet; values in percent.",
+        f"Category mode: {next(iter(modes)) if modes else 'unknown'}.",
         "Each metric cell: local mean ± sample standard deviation / GMFlowRec Table 1 CGRec.",
         "| Domain | Runs | HR@5 | HR@10 | NDCG@5 | NDCG@10 |",
         "|---|---:|---:|---:|---:|---:|",
