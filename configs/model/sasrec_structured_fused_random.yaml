@@ -1,0 +1,9 @@
+hidden_size: 64
+num_blocks: 2
+num_heads: 2
+dropout: 0.2
+maxlen: 50
+item_embedding_mode: content_fused
+attribute_artifact: data/attribute_experiment/structured-title
+content_ablation: random
+content_ablation_seed: 42

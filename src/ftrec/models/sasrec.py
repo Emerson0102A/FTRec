@@ -17,6 +17,7 @@ from .content_encoder import (
     TitleItemEncoder,
     load_content_artifact,
 )
+from .content_ablation import ablate_content_artifact
 
 if False:  # pragma: no cover - imported only for static type checkers
     from .embedding_adapter import TargetEmbeddingAdapter
@@ -46,6 +47,9 @@ class SASRecConfig:
     shared_behavior_blocks: int = 1
     content_projection_size: int = 0
     domain_embedding_scale: float = 0.1
+    content_ablation: str = "none"
+    content_ablation_seed: int = 42
+    content_ablation_domain_file: str | None = None
 
     def __post_init__(self) -> None:
         if self.num_items < 1 or self.hidden_size < 1 or self.num_blocks < 1:
@@ -61,6 +65,14 @@ class SASRecConfig:
                 "item_embedding_mode must be one of "
                 f"{ITEM_EMBEDDING_MODES}, got {self.item_embedding_mode!r}"
             )
+        if self.content_ablation not in {"none", "random", "shuffled", "attribute_only"}:
+            raise ValueError("unsupported content_ablation")
+        if self.content_ablation != "none" and self.item_embedding_mode != "content_fused":
+            raise ValueError("content_ablation requires content_fused")
+        if self.content_ablation == "shuffled" and self.content_ablation_domain_file is None:
+            raise ValueError("shuffled content requires content_ablation_domain_file")
+        if self.content_ablation != "shuffled" and self.content_ablation_domain_file is not None:
+            raise ValueError("content_ablation_domain_file is only used by shuffled content")
         if self.item_embedding_mode == "id" and self.attribute_artifact is not None:
             raise ValueError(
                 "attribute_artifact cannot be combined with ID embeddings; "
@@ -130,6 +142,12 @@ def model_config_dict(config: SASRecConfig) -> dict[str, object]:
         # MyModel4 always uses its own domain/title-conditioned soft attention;
         # the legacy fused-encoder pooling switch is not part of this model.
         values.pop("attribute_pooling")
+    if config.content_ablation == "none":
+        values.pop("content_ablation")
+        values.pop("content_ablation_seed")
+        values.pop("content_ablation_domain_file")
+    elif config.content_ablation != "shuffled":
+        values.pop("content_ablation_domain_file")
     return values
 
 
@@ -401,6 +419,13 @@ class SASRec(nn.Module):
             artifact = load_content_artifact(
                 config.attribute_artifact, config.num_items
             )
+            if config.content_ablation != "none":
+                artifact = ablate_content_artifact(
+                    artifact,
+                    control=config.content_ablation,
+                    seed=config.content_ablation_seed,
+                    domain_file=config.content_ablation_domain_file,
+                )
             if config.item_embedding_mode == "content_dual":
                 self.title_tower = _ContentSASRecTower(
                     config,
@@ -419,6 +444,7 @@ class SASRec(nn.Module):
                         attribute_pooling=config.attribute_pooling,
                         item_domain_file=config.item_domain_file,
                         attribute_temperature=config.attribute_temperature,
+                        attribute_only=config.content_ablation == "attribute_only",
                     ),
                 )
             else:

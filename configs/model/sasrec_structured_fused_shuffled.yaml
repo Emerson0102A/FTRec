@@ -1,0 +1,10 @@
+hidden_size: 64
+num_blocks: 2
+num_heads: 2
+dropout: 0.2
+maxlen: 50
+item_embedding_mode: content_fused
+attribute_artifact: data/attribute_experiment/structured-title
+content_ablation: shuffled
+content_ablation_seed: 42
+content_ablation_domain_file: data/processed/gmflowrec-amazon/items.csv.gz

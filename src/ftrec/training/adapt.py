@@ -46,7 +46,7 @@ from ftrec.models.lora import (
 )
 from ftrec.models.sasrec import SASRec, SASRecConfig, model_config_dict
 from ftrec.reproducibility import resolve_device, runtime_metadata, seed_everything
-from ftrec.training.checkpoint import load_checkpoint, save_checkpoint
+from ftrec.training.checkpoint import CheckpointMismatchError, load_checkpoint, save_checkpoint
 from ftrec.training.engine import EarlyStopping, OptimizerSettings, build_optimizers
 from ftrec.training.pretrain import run_single_task_step
 
@@ -241,6 +241,21 @@ def adapt_config_hash(model_config: SASRecConfig, settings: AdaptSettings) -> st
     )
 
 
+def validate_base_model_config(
+    base_checkpoint: str | Path, model_config: SASRecConfig
+) -> None:
+    """Reject a checkpoint whose external frozen content bank belongs to another arm."""
+
+    resolved = Path(base_checkpoint).parent / "resolved_config.json"
+    if not resolved.is_file():
+        return
+    previous = json.loads(resolved.read_text(encoding="utf-8"))
+    if previous.get("model") != model_config_dict(model_config):
+        raise CheckpointMismatchError(
+            f"base checkpoint model configuration differs from adaptation: {resolved}"
+        )
+
+
 def _build_adaptation_examples(
     store: SequenceStore,
     model_config: SASRecConfig,
@@ -329,6 +344,7 @@ def train_adaptation(
     seed_everything(settings.seed)
     device = resolve_device(settings.device)
     base_checkpoint = Path(base_checkpoint)
+    validate_base_model_config(base_checkpoint, model_config)
     base_hash = sha256_file(base_checkpoint)
     model = SASRec(model_config).to(device)
     expected = {"method": settings.pretrain_method}

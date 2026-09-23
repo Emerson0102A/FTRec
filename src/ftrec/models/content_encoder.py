@@ -193,6 +193,7 @@ class FusedContentItemEncoder(nn.Module):
         attribute_pooling: str = "hard_top1",
         item_domain_file: str | None = None,
         attribute_temperature: float = 1.0,
+        attribute_only: bool = False,
     ) -> None:
         super().__init__()
         if attribute_pooling not in ATTRIBUTE_POOLING_MODES:
@@ -205,6 +206,7 @@ class FusedContentItemEncoder(nn.Module):
         self.title_encoder = TitleItemEncoder(artifact, hidden_size=hidden_size)
         self.attribute_pooling = attribute_pooling
         self.attribute_temperature = attribute_temperature
+        self.attribute_only = attribute_only
         self.attribute_encoder: AttributeItemEncoder | None = None
         self.attribute_adapter: nn.Sequential | None = None
         self.attribute_title_query: nn.Linear | None = None
@@ -325,6 +327,8 @@ class FusedContentItemEncoder(nn.Module):
     def forward(self, item_ids: torch.Tensor) -> torch.Tensor:
         ids = item_ids.long()
         title = self.title_encoder(ids)
+        if self.attribute_only:
+            title = torch.zeros_like(title)
         if self.attribute_pooling == "hard_top1":
             assert self.attribute_encoder is not None
             attributes = self.attribute_encoder(ids)
