@@ -17,8 +17,13 @@ def summarize_semantic_ablation(
     arms: tuple[str, ...] = DEFAULT_ARMS,
     domains: tuple[int, ...] = (0, 1, 2, 3, 4),
     seed: int = 42,
+    fallback_roots: dict[str, Path] | None = None,
 ) -> dict[str, object]:
     root = Path(root)
+    if fallback_roots is None:
+        fallback_roots = {
+            "semantic": Path("runs-attributes/structured-title-fused-target-only/lora-all")
+        }
     if not arms or not domains:
         raise ValueError("arms and domains must be nonempty")
     rows: list[dict[str, object]] = []
@@ -29,6 +34,12 @@ def summarize_semantic_ablation(
                 root / arm / "adapt" / "lora_all" / "joint_proportional"
                 / f"domain-{domain}" / "rank-5" / f"seed-{seed}" / "result.json"
             )
+            if not path.is_file() and arm in fallback_roots:
+                path = (
+                    Path(fallback_roots[arm]) / "adapt" / "lora_all"
+                    / "joint_proportional" / f"domain-{domain}" / "rank-5"
+                    / f"seed-{seed}" / "result.json"
+                )
             result = json.loads(path.read_text(encoding="utf-8"))
             cohort = (
                 result["data_hash"], result["num_examples"],
@@ -73,9 +84,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--domains", type=int, nargs="+", default=(0, 1, 2, 3, 4))
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--semantic-root", type=Path,
+        default=Path("runs-attributes/structured-title-fused-target-only/lora-all"),
+    )
     args = parser.parse_args(argv)
     report = summarize_semantic_ablation(
-        args.root, arms=tuple(args.arms), domains=tuple(args.domains), seed=args.seed
+        args.root, arms=tuple(args.arms), domains=tuple(args.domains), seed=args.seed,
+        fallback_roots={"semantic": args.semantic_root},
     )
     output = json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
     if args.output is not None:

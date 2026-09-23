@@ -45,3 +45,15 @@ def test_semantic_report_rejects_different_target_cohorts(tmp_path):
         summarize_semantic_ablation(
             tmp_path, arms=("semantic", "shuffled"), domains=(0,), seed=42
         )
+
+
+def test_semantic_report_reads_previously_completed_semantic_run(tmp_path):
+    prior = tmp_path / "prior-semantic"
+    current = tmp_path / "new"
+    _write(prior, "semantic", 0, before=0.1, after=0.3)
+    _write(current, "shuffled", 0, before=0.1, after=0.2)
+    report = summarize_semantic_ablation(
+        current, arms=("semantic", "shuffled"), domains=(0,), seed=42,
+        fallback_roots={"semantic": prior / "semantic"},
+    )
+    assert report["aligned_minus_shuffled_gain"] == pytest.approx(0.1)

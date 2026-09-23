@@ -37,14 +37,18 @@ epoch 0 绝对 NDCG、适配后绝对 NDCG 和 `best_epoch`；`gain` 的差异�
 ## 运行
 
 需要 `data/processed/gmflowrec-amazon/` 和
-`data/attribute_experiment/structured-title/` 的完整数据。先打印 5 个预训练和
-25 个微调命令，不访问数据：
+`data/attribute_experiment/structured-title/` 的完整数据。seed 42 默认复用已有的
+`runs-lr1e-4` ID 预训练 checkpoint、`runs-attributes/structured-title-fused`
+语义预训练 checkpoint，以及已完成的 structured-title-fused target-only rank-5
+`lora_all` 微调结果。脚本不会复制或覆盖这些产物。先打印计划，不访问数据：
 
 ```bash
 ACTION=plan bash scripts/run_semantic_ft_ablation.sh
 ```
 
-执行全矩阵，完成的组合会由现有 runner 按指纹跳过：
+若上述已有产物都在服务器上，计划只新增 random、shuffled、attribute 的 3 个
+预训练，以及这三组和 ID 的 20 个目标域微调。若语义微调缺少完成标记，脚本会在
+新目录补跑该域。执行矩阵时，完成的新增组合由现有 runner 按指纹跳过：
 
 ```bash
 bash scripts/run_semantic_ft_ablation.sh
@@ -52,8 +56,12 @@ bash scripts/run_semantic_ft_ablation.sh
 
 可以用 `ARMS="shuffled semantic"`、`PHASE=pretrain`、`DOMAINS="0 1"`、
 `SEED=43` 限定范围。其他 seed 默认复用同一套固定随机向量/置换，只改变训练随机性。
-在完整数据存在后，`ACTION=dry-run` 可检查现有 runner 的实际 run 判定；如果预训练
-checkpoint 尚未生成，微调部分会报告 `missing-base`，属于预期。
+其他 seed 只有在对应的 ID 和 semantic 预训练 checkpoint 已存在时才能复用；
+本脚本不会悄悄用新训练覆盖它们。默认已有结果路径可用 `ID_BASE_ROOT`、
+`SEMANTIC_BASE_ROOT` 和 `SEMANTIC_ADAPT_ROOT` 覆盖。
+在完整数据存在后，`ACTION=dry-run PHASE=pretrain` 可检查新组预训练的实际 run
+判定。新组的 checkpoint 生成后，再用 `ACTION=dry-run PHASE=adapt` 检查微调；
+缺少基线 checkpoint 时脚本会直接报错。
 
 完成后汇总，并自动检查五组使用相同目标域 cohort 与训练协议：
 
@@ -62,6 +70,13 @@ python -m ftrec.analysis.semantic_ablation \
   --root runs-attributes/semantic-ft-ablation \
   --output results/semantic-ft-ablation-seed42.json
 ```
+
+汇总器会在新目录没有 semantic 结果时读取原有的 target-only `lora_all` 结果；
+若其根目录不同，用 `--semantic-root` 指定。已有 ID 预训练的最多 epoch / patience
+是 100 / 10，best epoch 为 2；语义预训练的最多 epoch / patience 是 300 / 20，
+best epoch 为 293。因此 ID 是辅助基线，不能把 ID 与语义组的差异归因于语义
+结构。主对照的 shuffled 按语义组相同的预训练配置和预算训练；解释两者差异时
+需披露语义组复用了历史 checkpoint。
 
 结果中 `macro_gain` 是五域等权微调收益，`aligned_minus_shuffled_gain` 是主要对照。
 如果只有 semantic 的收益为正而 shuffled 接近零，再检查跨 seed 一致性、绝对指标
