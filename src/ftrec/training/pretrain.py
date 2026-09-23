@@ -124,6 +124,7 @@ class PretrainSettings:
     progress: bool = True
     resume: bool = False
     evaluate_test_each_epoch: bool = False
+    snapshot_epochs: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         specification = method_spec(self.method)
@@ -138,6 +139,11 @@ class PretrainSettings:
                 raise ValueError(f"{name} must be positive")
         if self.steps_per_epoch is not None and self.steps_per_epoch < 1:
             raise ValueError("steps_per_epoch must be positive or automatic")
+        if (
+            tuple(sorted(set(self.snapshot_epochs))) != self.snapshot_epochs
+            or any(epoch < 1 or epoch > self.epochs for epoch in self.snapshot_epochs)
+        ):
+            raise ValueError("snapshot_epochs must be unique, sorted, and within epochs")
         if self.evaluation_protocol not in {"full", "sampled"}:
             raise ValueError("evaluation_protocol must be 'full' or 'sampled'")
         if (
@@ -194,6 +200,8 @@ def pretrain_settings_dict(settings: PretrainSettings) -> dict[str, object]:
     values = asdict(settings)
     if not settings.evaluate_test_each_epoch:
         values.pop("evaluate_test_each_epoch")
+    if not settings.snapshot_epochs:
+        values.pop("snapshot_epochs")
     return values
 
 
@@ -1242,6 +1250,17 @@ def train_pretraining(
                 training_state={"epoch": epoch, "global_step": global_step},
                 optimizer_state=optimizers.state_dict(),
             )
+            if epoch in settings.snapshot_epochs:
+                save_checkpoint(
+                    run.path / "snapshots" / f"epoch-{epoch:04d}.pt",
+                    model,
+                    metadata=metadata,
+                    training_state={
+                        "epoch": epoch,
+                        "global_step": global_step,
+                        "validation_macro_ndcg": validation_ndcg,
+                    },
+                )
             training_progress.set_postfix(
                 epoch=epoch,
                 loss=f"{epoch_record['loss']:.4f}",

@@ -36,6 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--epochs", type=int)
     parser.add_argument("--patience", type=int)
     parser.add_argument("--steps-per-epoch", type=int)
+    parser.add_argument("--snapshot-epochs", type=int, nargs="+")
     parser.add_argument("--device")
     parser.add_argument(
         "--test-each-epoch",
@@ -115,6 +116,11 @@ def main(argv: list[str] | None = None) -> int:
             _pick(args.steps_per_epoch, config, "steps_per_epoch")
         ),
         epochs=int(_pick(args.epochs, config, "epochs")),
+        snapshot_epochs=tuple(
+            args.snapshot_epochs
+            if args.snapshot_epochs is not None
+            else config.get("snapshot_epochs", ())
+        ),
         patience=int(_pick(args.patience, config, "patience")),
         lr=float(config["lr"]),
         embedding_lr=(

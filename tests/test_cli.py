@@ -215,6 +215,14 @@ def test_joint_proportional_config_is_the_lr1e4_control() -> None:
     assert config["gradient_conflict"]["enabled"] is False
 
 
+def test_adapt_cli_accepts_patience_above_fixed_budget() -> None:
+    from ftrec.cli.adapt import build_parser
+
+    args = build_parser().parse_args(["--epochs", "12", "--patience", "13"])
+    assert args.epochs == 12
+    assert args.patience == 13
+
+
 def test_context_ablation_scripts_encode_the_expected_run_matrix() -> None:
     root = Path(__file__).parents[1] / "scripts"
     single_mixed = (root / "run_single_mixed.sh").read_text(encoding="utf-8")

@@ -676,6 +676,7 @@ def test_joint_pretraining_run_writes_checkpoints_metrics_and_gradients(
             steps_per_epoch=1,
             epochs=1,
             patience=1,
+            snapshot_epochs=(1,),
             device="cpu",
             evaluation_protocol="sampled",
             num_eval_negatives=1,
@@ -686,6 +687,10 @@ def test_joint_pretraining_run_writes_checkpoints_metrics_and_gradients(
     assert result.best_checkpoint == output / "best.pt"
     assert result.best_checkpoint.is_file()
     assert (output / "last.pt").is_file()
+    snapshot = torch.load(output / "snapshots" / "epoch-0001.pt", weights_only=False)
+    last = torch.load(output / "last.pt", weights_only=False)
+    assert snapshot["training_state"]["epoch"] == 1
+    assert snapshot["metadata"]["model_state_hash"] == last["metadata"]["model_state_hash"]
     assert (output / "result.json").is_file()
     assert (output / "gradient_conflicts.jsonl").is_file()
     assert (output / "gradient_conflict_pairs.csv").is_file()
@@ -1069,6 +1074,14 @@ def test_pretrain_config_hash_ignores_output_control_fields(tmp_path: Path) -> N
             progress=False,
         ),
     )
+
+
+def test_snapshot_epochs_must_be_unique_and_within_training_horizon(tmp_path: Path) -> None:
+    from ftrec.training.pretrain import PretrainSettings
+
+    for epochs in ((0,), (4,), (2, 2)):
+        with pytest.raises(ValueError, match="snapshot_epochs"):
+            PretrainSettings(method="joint", output_dir=tmp_path, epochs=3, snapshot_epochs=epochs)
 
 
 def test_legacy_model_config_serialization_omits_new_pooling_defaults() -> None:

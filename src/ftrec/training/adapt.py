@@ -247,6 +247,8 @@ def validate_base_model_config(
     """Reject a checkpoint whose external frozen content bank belongs to another arm."""
 
     resolved = Path(base_checkpoint).parent / "resolved_config.json"
+    if not resolved.is_file() and Path(base_checkpoint).parent.name == "snapshots":
+        resolved = Path(base_checkpoint).parent.parent / "resolved_config.json"
     if not resolved.is_file():
         return
     previous = json.loads(resolved.read_text(encoding="utf-8"))

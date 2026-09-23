@@ -57,6 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--content-bottleneck-size", type=int)
     parser.add_argument("--seed", type=int)
     parser.add_argument("--epochs", type=int)
+    parser.add_argument("--patience", type=int)
     parser.add_argument("--steps-per-epoch", type=int)
     parser.add_argument("--num-train-negatives", type=int)
     parser.add_argument("--context-mode", choices=("mixed", "target_only"))
@@ -243,7 +244,11 @@ def main(argv: list[str] | None = None) -> int:
                             else config["steps_per_epoch"]
                         ),
                         epochs=(args.epochs if args.epochs is not None else int(config["epochs"])),
-                        patience=int(config["patience"]),
+                        patience=(
+                            args.patience
+                            if args.patience is not None
+                            else int(config["patience"])
+                        ),
                         lr=float(config["lr"]),
                         embedding_lr=(
                             float(config["embedding_lr"])
